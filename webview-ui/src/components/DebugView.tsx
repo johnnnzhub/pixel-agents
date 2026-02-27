@@ -1,4 +1,7 @@
+import { useState, useEffect } from 'react'
 import type { ToolActivity } from '../office/types.js'
+import type { OfficeState } from '../office/engine/officeState.js'
+import { gameLoopDiagnostics } from '../office/engine/gameLoop.js'
 import { vscode } from '../vscodeApi.js'
 
 interface DebugViewProps {
@@ -8,6 +11,7 @@ interface DebugViewProps {
   agentStatuses: Record<number, string>
   subagentTools: Record<number, Record<string, ToolActivity[]>>
   onSelectAgent: (id: number) => void
+  officeState?: OfficeState
 }
 
 /** Z-index just below the floating toolbar (50) so the toolbar stays on top */
@@ -50,6 +54,59 @@ function ToolLine({ tool }: { tool: ToolActivity }) {
   )
 }
 
+function DiagnosticsPanel({ officeState }: { officeState?: OfficeState }) {
+  const [, forceUpdate] = useState(0)
+
+  // Refresh diagnostics display every second
+  useEffect(() => {
+    const timer = setInterval(() => forceUpdate((n) => n + 1), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  // Character state summary
+  let typeCount = 0
+  let idleCount = 0
+  let walkCount = 0
+  let spawnCount = 0
+  if (officeState) {
+    for (const ch of officeState.characters.values()) {
+      if (ch.matrixEffect) { spawnCount++; continue }
+      if (ch.state === 'type') typeCount++
+      else if (ch.state === 'idle') idleCount++
+      else if (ch.state === 'walk') walkCount++
+    }
+  }
+
+  const charCount = officeState?.characters.size ?? 0
+
+  return (
+    <div
+      style={{
+        border: '2px solid #4a6a4a',
+        borderRadius: 0,
+        padding: '6px 8px',
+        background: 'rgba(0, 100, 0, 0.1)',
+        fontSize: '22px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+      }}
+    >
+      <span style={{ fontWeight: 'bold', color: '#7fbf7f' }}>Diagnostics</span>
+      <span>FPS: {gameLoopDiagnostics.fps} | Frames: {gameLoopDiagnostics.frameCount}</span>
+      <span>Loop: {gameLoopDiagnostics.usingFallback ? 'setInterval (fallback)' : 'requestAnimationFrame'}</span>
+      <span>Characters: {charCount} (type:{typeCount} idle:{idleCount} walk:{walkCount} spawn:{spawnCount})</span>
+      {officeState && charCount > 0 && (
+        <span style={{ opacity: 0.7 }}>
+          {Array.from(officeState.characters.values()).map((ch) =>
+            `#${ch.id}:${ch.state}${ch.isActive ? '(active)' : ''}${ch.matrixEffect ? `[${ch.matrixEffect}]` : ''}`
+          ).join(' | ')}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export function DebugView({
   agents,
   selectedAgent,
@@ -57,6 +114,7 @@ export function DebugView({
   agentStatuses,
   subagentTools,
   onSelectAgent,
+  officeState,
 }: DebugViewProps) {
   const renderAgentCard = (id: number) => {
     const isSelected = selectedAgent === id
@@ -172,6 +230,7 @@ export function DebugView({
       {/* Top padding so cards don't overlap the floating toolbar */}
       <div style={{ padding: '12px 12px 12px', fontSize: '28px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <DiagnosticsPanel officeState={officeState} />
           {agents.map(renderAgentCard)}
         </div>
       </div>

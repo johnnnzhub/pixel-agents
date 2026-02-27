@@ -85,6 +85,7 @@ export function OfficeCanvas({ officeState, onClick, isEditMode, editorState, on
       observer.observe(containerRef.current)
     }
 
+    console.log('[Pixel Agents] Starting game loop')
     const stop = startGameLoop(canvas, {
       update: (dt) => {
         officeState.update(dt)

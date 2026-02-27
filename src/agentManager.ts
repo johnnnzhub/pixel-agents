@@ -41,6 +41,7 @@ export function launchNewTerminal(
 	terminal.show();
 
 	const sessionId = crypto.randomUUID();
+	console.log(`[Pixel Agents] Creating terminal "${TERMINAL_NAME_PREFIX} #${idx}" with session ${sessionId}`);
 	terminal.sendText(`claude --session-id ${sessionId}`);
 
 	const projectDir = getProjectDirPath(cwd);
@@ -51,6 +52,7 @@ export function launchNewTerminal(
 
 	// Pre-register expected JSONL file so project scan won't treat it as a /clear file
 	const expectedFile = path.join(projectDir, `${sessionId}.jsonl`);
+	console.log(`[Pixel Agents] Expected JSONL path: ${expectedFile}`);
 	knownJsonlFiles.add(expectedFile);
 
 	// Create agent immediately (before JSONL file exists)

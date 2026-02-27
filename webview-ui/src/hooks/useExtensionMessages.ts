@@ -107,6 +107,7 @@ export function useExtensionMessages(
         }
       } else if (msg.type === 'agentCreated') {
         const id = msg.id as number
+        console.log(`[Pixel Agents] Agent ${id} created — characters: ${os.characters.size + 1}`)
         setAgents((prev) => (prev.includes(id) ? prev : [...prev, id]))
         setSelectedAgent(id)
         os.addAgent(id)
