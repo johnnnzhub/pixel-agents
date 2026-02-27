@@ -18,6 +18,27 @@ export const WANDER_MOVES_BEFORE_REST_MAX = 6
 export const SEAT_REST_MIN_SEC = 120.0
 export const SEAT_REST_MAX_SEC = 240.0
 
+// Idle breathing (subtle Y oscillation for idle agents)
+export const IDLE_BREATHING_SPEED = 1.2        // cycles per second
+export const IDLE_BREATHING_AMPLITUDE_PX = 1.5 // amplitude in pixels
+
+// POI (Points of Interest) - idle wander
+export const POI_WANDER_CHANCE = 0.6
+export const POI_PAUSE_MIN_SEC = 4.0
+export const POI_PAUSE_MAX_SEC = 12.0
+
+// POI-specific pause ranges (seconds) [min, max]
+export const POI_PAUSE_COOLER: [number, number] = [3.0, 6.0]
+export const POI_PAUSE_PLANT: [number, number] = [2.0, 5.0]
+export const POI_PAUSE_BOOKSHELF: [number, number] = [6.0, 15.0]
+export const POI_PAUSE_WHITEBOARD: [number, number] = [8.0, 20.0]
+export const POI_PAUSE_DEFAULT: [number, number] = [4.0, 12.0]
+
+// Agent-to-agent greeting
+export const GREETING_DISTANCE_TILES = 2
+export const GREETING_DURATION_SEC = 2.5
+export const GREETING_COOLDOWN_SEC = 30.0
+
 // ── Matrix Effect ────────────────────────────────────────────
 export const MATRIX_EFFECT_DURATION_SEC = 0.3
 export const MATRIX_TRAIL_LENGTH = 6
@@ -99,6 +120,7 @@ export const NOTIFICATION_VOLUME = 0.14
 // ── Game Logic ───────────────────────────────────────────────
 export const MAX_DELTA_TIME_SEC = 0.1
 export const WAITING_BUBBLE_DURATION_SEC = 2.0
+export const REACTION_BUBBLE_DURATION_SEC = 1.5
 export const DISMISS_BUBBLE_FAST_FADE_SEC = 0.3
 export const INACTIVE_SEAT_TIMER_MIN_SEC = 3.0
 export const INACTIVE_SEAT_TIMER_RANGE_SEC = 2.0

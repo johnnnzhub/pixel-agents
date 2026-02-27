@@ -318,6 +318,31 @@ export const BUBBLE_WAITING_SPRITE: SpriteData = (() => {
   ]
 })()
 
+/** Success bubble: white square with green checkmark (same as waiting), 11x13 */
+export const BUBBLE_SUCCESS_SPRITE: SpriteData = BUBBLE_WAITING_SPRITE
+
+/** Error bubble: white square with red X, 11x13 */
+export const BUBBLE_ERROR_SPRITE: SpriteData = (() => {
+  const B = '#555566' // border
+  const F = '#EEEEFF' // fill
+  const R = '#DD4444' // red X
+  return [
+    [_, B, B, B, B, B, B, B, B, B, _],
+    [B, F, F, F, F, F, F, F, F, F, B],
+    [B, F, F, F, F, F, F, F, F, F, B],
+    [B, F, F, R, F, F, F, R, F, F, B],
+    [B, F, F, F, R, F, R, F, F, F, B],
+    [B, F, F, F, F, R, F, F, F, F, B],
+    [B, F, F, F, R, F, R, F, F, F, B],
+    [B, F, F, R, F, F, F, R, F, F, B],
+    [B, F, F, F, F, F, F, F, F, F, B],
+    [_, B, B, B, B, B, B, B, B, B, _],
+    [_, _, _, _, B, B, B, _, _, _, _],
+    [_, _, _, _, _, B, _, _, _, _, _],
+    [_, _, _, _, _, _, _, _, _, _, _],
+  ]
+})()
+
 // ── Character Sprites ───────────────────────────────────────────
 // 16x24 characters with palette substitution
 

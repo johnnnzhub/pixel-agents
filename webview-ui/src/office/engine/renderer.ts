@@ -1,7 +1,7 @@
 import { TileType, TILE_SIZE, CharacterState } from '../types.js'
 import type { TileType as TileTypeVal, FurnitureInstance, Character, SpriteData, Seat, FloorColor } from '../types.js'
 import { getCachedSprite, getOutlineSprite } from '../sprites/spriteCache.js'
-import { getCharacterSprites, BUBBLE_PERMISSION_SPRITE, BUBBLE_WAITING_SPRITE } from '../sprites/spriteData.js'
+import { getCharacterSprites, BUBBLE_PERMISSION_SPRITE, BUBBLE_WAITING_SPRITE, BUBBLE_SUCCESS_SPRITE, BUBBLE_ERROR_SPRITE } from '../sprites/spriteData.js'
 import { getCharacterSprite } from './characters.js'
 import { renderMatrixEffect } from './matrixEffect.js'
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js'
@@ -38,6 +38,8 @@ import {
   SELECTION_HIGHLIGHT_COLOR,
   DELETE_BUTTON_BG,
   ROTATE_BUTTON_BG,
+  IDLE_BREATHING_SPEED,
+  IDLE_BREATHING_AMPLITUDE_PX,
 } from '../../constants.js'
 
 // ── Render functions ────────────────────────────────────────────
@@ -126,9 +128,13 @@ export function renderScene(
     const cached = getCachedSprite(spriteData, zoom)
     // Sitting offset: shift character down when seated so they visually sit in the chair
     const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0
+    // Breathing offset: subtle Y oscillation for idle agents
+    const breathingOffset = ch.state === CharacterState.IDLE
+      ? Math.sin(ch.idleTimer * IDLE_BREATHING_SPEED * Math.PI * 2) * IDLE_BREATHING_AMPLITUDE_PX
+      : 0
     // Anchor at bottom-center of character — round to integer device pixels
     const drawX = Math.round(offsetX + ch.x * zoom - cached.width / 2)
-    const drawY = Math.round(offsetY + (ch.y + sittingOffset) * zoom - cached.height)
+    const drawY = Math.round(offsetY + (ch.y + sittingOffset + breathingOffset) * zoom - cached.height)
 
     // Sort characters by bottom of their tile (not center) so they render
     // in front of same-row furniture (e.g. chairs) but behind furniture
@@ -457,13 +463,14 @@ export function renderBubbles(
   for (const ch of characters) {
     if (!ch.bubbleType) continue
 
-    const sprite = ch.bubbleType === 'permission'
-      ? BUBBLE_PERMISSION_SPRITE
+    const sprite = ch.bubbleType === 'permission' ? BUBBLE_PERMISSION_SPRITE
+      : ch.bubbleType === 'success' ? BUBBLE_SUCCESS_SPRITE
+      : ch.bubbleType === 'error' ? BUBBLE_ERROR_SPRITE
       : BUBBLE_WAITING_SPRITE
 
-    // Compute opacity: permission = full, waiting = fade in last 0.5s
+    // Compute opacity: permission = full, timed bubbles = fade in last 0.5s
     let alpha = 1.0
-    if (ch.bubbleType === 'waiting' && ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC) {
+    if (ch.bubbleType !== 'permission' && ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC) {
       alpha = ch.bubbleTimer / BUBBLE_FADE_DURATION_SEC
     }
 

@@ -162,7 +162,11 @@ export function useExtensionMessages(
         setAgentTools((prev) => {
           const list = prev[id] || []
           if (list.some((t) => t.toolId === toolId)) return prev
-          return { ...prev, [id]: [...list, { toolId, status, done: false }] }
+          const updated = { ...prev, [id]: [...list, { toolId, status, done: false }] }
+          // Update typing intensity
+          const activeCount = updated[id].filter((t) => !t.done).length
+          os.setAgentToolCount(id, activeCount)
+          return updated
         })
         const toolName = extractToolName(status)
         os.setAgentTool(id, toolName)
@@ -180,14 +184,23 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentToolDone') {
         const id = msg.id as number
         const toolId = msg.toolId as string
+        const isError = msg.isError as boolean | undefined
         setAgentTools((prev) => {
           const list = prev[id]
           if (!list) return prev
-          return {
+          const updated = {
             ...prev,
             [id]: list.map((t) => (t.toolId === toolId ? { ...t, done: true } : t)),
           }
+          // Update typing intensity
+          const activeCount = updated[id].filter((t) => !t.done).length
+          os.setAgentToolCount(id, activeCount)
+          return updated
         })
+        // Show reaction bubble
+        if (isError !== undefined) {
+          os.showReactionBubble(id, isError)
+        }
       } else if (msg.type === 'agentToolsClear') {
         const id = msg.id as number
         setAgentTools((prev) => {
@@ -206,6 +219,7 @@ export function useExtensionMessages(
         os.removeAllSubagents(id)
         setSubagentCharacters((prev) => prev.filter((s) => s.parentAgentId !== id))
         os.setAgentTool(id, null)
+        os.setAgentToolCount(id, 0)
         os.clearPermissionBubble(id)
       } else if (msg.type === 'agentSelected') {
         const id = msg.id as number
@@ -287,6 +301,7 @@ export function useExtensionMessages(
         const id = msg.id as number
         const parentToolId = msg.parentToolId as string
         const toolId = msg.toolId as string
+        const isError = msg.isError as boolean | undefined
         setSubagentTools((prev) => {
           const agentSubs = prev[id]
           if (!agentSubs) return prev
@@ -297,6 +312,13 @@ export function useExtensionMessages(
             [id]: { ...agentSubs, [parentToolId]: list.map((t) => (t.toolId === toolId ? { ...t, done: true } : t)) },
           }
         })
+        // Show reaction bubble on sub-agent character
+        if (isError !== undefined) {
+          const subId = os.getSubagentId(id, parentToolId)
+          if (subId !== null) {
+            os.showReactionBubble(subId, isError)
+          }
+        }
       } else if (msg.type === 'subagentClear') {
         const id = msg.id as number
         const parentToolId = msg.parentToolId as string

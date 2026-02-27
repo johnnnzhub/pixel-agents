@@ -4,6 +4,7 @@ import {
   HUE_SHIFT_MIN_DEG,
   HUE_SHIFT_RANGE_DEG,
   WAITING_BUBBLE_DURATION_SEC,
+  REACTION_BUBBLE_DURATION_SEC,
   DISMISS_BUBBLE_FAST_FADE_SEC,
   INACTIVE_SEAT_TIMER_MIN_SEC,
   INACTIVE_SEAT_TIMER_RANGE_SEC,
@@ -12,8 +13,13 @@ import {
   CHARACTER_SITTING_OFFSET_PX,
   CHARACTER_HIT_HALF_WIDTH,
   CHARACTER_HIT_HEIGHT,
+  POI_PAUSE_COOLER,
+  POI_PAUSE_PLANT,
+  POI_PAUSE_BOOKSHELF,
+  POI_PAUSE_WHITEBOARD,
+  POI_PAUSE_DEFAULT,
 } from '../../constants.js'
-import type { Character, Seat, FurnitureInstance, TileType as TileTypeVal, OfficeLayout, PlacedFurniture } from '../types.js'
+import type { Character, POITile, Seat, FurnitureInstance, TileType as TileTypeVal, OfficeLayout, PlacedFurniture } from '../types.js'
 import { createCharacter, updateCharacter } from './characters.js'
 import { matrixEffectSeeds } from './matrixEffect.js'
 import { isWalkable, getWalkableTiles, findPath } from '../layout/tileMap.js'
@@ -33,6 +39,7 @@ export class OfficeState {
   blockedTiles: Set<string>
   furniture: FurnitureInstance[]
   walkableTiles: Array<{ col: number; row: number }>
+  poiTiles: POITile[]
   characters: Map<number, Character> = new Map()
   selectedAgentId: number | null = null
   cameraFollowId: number | null = null
@@ -51,6 +58,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(this.layout.furniture)
     this.furniture = layoutToFurnitureInstances(this.layout.furniture)
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles)
+    this.poiTiles = this.computePOITiles()
   }
 
   /** Rebuild all derived state from a new layout. Reassigns existing characters.
@@ -62,6 +70,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(layout.furniture)
     this.rebuildFurnitureInstances()
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles)
+    this.poiTiles = this.computePOITiles()
 
     // Shift character positions when grid expands left/up
     if (shift && (shift.col !== 0 || shift.row !== 0)) {
@@ -136,6 +145,71 @@ export class OfficeState {
     ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2
     ch.path = []
     ch.moveProgress = 0
+  }
+
+  /** Built-in furniture types that are always POIs */
+  private static readonly POI_BUILTIN = new Set(['cooler', 'bookshelf', 'plant', 'whiteboard'])
+  /** Dynamic asset categories that qualify as POIs */
+  private static readonly POI_CATEGORIES = new Set(['decor', 'misc', 'storage'])
+  /** Categories excluded from POI even if they match */
+  private static readonly POI_EXCLUDE_CATEGORIES = new Set(['chairs'])
+  /** POI-specific pause timings */
+  private static readonly POI_TIMINGS: Record<string, [number, number]> = {
+    cooler: POI_PAUSE_COOLER,
+    bookshelf: POI_PAUSE_BOOKSHELF,
+    plant: POI_PAUSE_PLANT,
+    whiteboard: POI_PAUSE_WHITEBOARD,
+  }
+
+  private computePOITiles(): POITile[] {
+    const pois: POITile[] = []
+    const seen = new Set<string>()
+
+    for (const item of this.layout.furniture) {
+      const entry = getCatalogEntry(item.type)
+      if (!entry) continue
+      // Check if this furniture qualifies as a POI
+      const isBuiltinPOI = OfficeState.POI_BUILTIN.has(item.type)
+      const isCategoryPOI = entry.category != null
+        && OfficeState.POI_CATEGORIES.has(entry.category)
+        && !OfficeState.POI_EXCLUDE_CATEGORIES.has(entry.category)
+        && !entry.isDesk
+      if (!isBuiltinPOI && !isCategoryPOI) continue
+
+      // Resolve POI-specific pause timing
+      const timing = OfficeState.POI_TIMINGS[item.type] ?? POI_PAUSE_DEFAULT
+      const [pauseMin, pauseMax] = timing
+
+      const fw = entry.footprintW
+      const fh = entry.footprintH
+
+      // Check tiles adjacent to the furniture footprint (4 edges)
+      // North edge (row above footprint)
+      for (let dc = 0; dc < fw; dc++) {
+        this.addPOIIfWalkable(pois, seen, item.col + dc, item.row - 1, Direction.DOWN, pauseMin, pauseMax)
+      }
+      // South edge (row below footprint)
+      for (let dc = 0; dc < fw; dc++) {
+        this.addPOIIfWalkable(pois, seen, item.col + dc, item.row + fh, Direction.UP, pauseMin, pauseMax)
+      }
+      // West edge (col left of footprint)
+      for (let dr = 0; dr < fh; dr++) {
+        this.addPOIIfWalkable(pois, seen, item.col - 1, item.row + dr, Direction.RIGHT, pauseMin, pauseMax)
+      }
+      // East edge (col right of footprint)
+      for (let dr = 0; dr < fh; dr++) {
+        this.addPOIIfWalkable(pois, seen, item.col + fw, item.row + dr, Direction.LEFT, pauseMin, pauseMax)
+      }
+    }
+    return pois
+  }
+
+  private addPOIIfWalkable(pois: POITile[], seen: Set<string>, col: number, row: number, facingDir: Direction, pauseMin: number, pauseMax: number): void {
+    const key = `${col},${row}`
+    if (seen.has(key)) return
+    if (!isWalkable(col, row, this.tileMap, this.blockedTiles)) return
+    seen.add(key)
+    pois.push({ col, row, facingDir, pauseMin, pauseMax })
   }
 
   getLayout(): OfficeLayout {
@@ -589,6 +663,20 @@ export class OfficeState {
     }
   }
 
+  showReactionBubble(id: number, isError: boolean): void {
+    const ch = this.characters.get(id)
+    if (!ch) return
+    // Don't overwrite permission bubble (more important)
+    if (ch.bubbleType === 'permission') return
+    ch.bubbleType = isError ? 'error' : 'success'
+    ch.bubbleTimer = REACTION_BUBBLE_DURATION_SEC
+  }
+
+  setAgentToolCount(id: number, count: number): void {
+    const ch = this.characters.get(id)
+    if (ch) ch.activeToolCount = count
+  }
+
   showWaitingBubble(id: number): void {
     const ch = this.characters.get(id)
     if (ch) {
@@ -597,15 +685,15 @@ export class OfficeState {
     }
   }
 
-  /** Dismiss bubble on click — permission: instant, waiting: quick fade */
+  /** Dismiss bubble on click — permission: instant, timed bubbles: quick fade */
   dismissBubble(id: number): void {
     const ch = this.characters.get(id)
     if (!ch || !ch.bubbleType) return
     if (ch.bubbleType === 'permission') {
       ch.bubbleType = null
       ch.bubbleTimer = 0
-    } else if (ch.bubbleType === 'waiting') {
-      // Trigger immediate fade (0.3s remaining)
+    } else {
+      // Trigger immediate fade (0.3s remaining) for waiting/success/error
       ch.bubbleTimer = Math.min(ch.bubbleTimer, DISMISS_BUBBLE_FAST_FADE_SEC)
     }
   }
@@ -632,11 +720,11 @@ export class OfficeState {
 
       // Temporarily unblock own seat so character can pathfind to it
       this.withOwnSeatUnblocked(ch, () =>
-        updateCharacter(ch, dt, this.walkableTiles, this.seats, this.tileMap, this.blockedTiles)
+        updateCharacter(ch, dt, this.walkableTiles, this.seats, this.tileMap, this.blockedTiles, this.poiTiles, this.characters)
       )
 
-      // Tick bubble timer for waiting bubbles
-      if (ch.bubbleType === 'waiting') {
+      // Tick bubble timer for timed bubbles (waiting, success, error)
+      if (ch.bubbleType === 'waiting' || ch.bubbleType === 'success' || ch.bubbleType === 'error') {
         ch.bubbleTimer -= dt
         if (ch.bubbleTimer <= 0) {
           ch.bubbleType = null

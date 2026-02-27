@@ -64,6 +64,14 @@ export interface Seat {
   assigned: boolean
 }
 
+export interface POITile {
+  col: number
+  row: number
+  facingDir: Direction
+  pauseMin: number
+  pauseMax: number
+}
+
 export interface FurnitureInstance {
   sprite: SpriteData
   /** Pixel x (top-left) */
@@ -178,7 +186,7 @@ export interface Character {
   /** Assigned seat uid, or null if no seat */
   seatId: string | null
   /** Active speech bubble type, or null if none showing */
-  bubbleType: 'permission' | 'waiting' | null
+  bubbleType: 'permission' | 'waiting' | 'success' | 'error' | null
   /** Countdown timer for bubble (waiting: 2→0, permission: unused) */
   bubbleTimer: number
   /** Timer to stay seated while inactive after seat reassignment (counts down to 0) */
@@ -193,4 +201,20 @@ export interface Character {
   matrixEffectTimer: number
   /** Per-column random seeds (16 values) for staggered rain timing */
   matrixEffectSeeds: number[]
+  /** Direction to face when arriving at a POI wander destination, or null */
+  wanderFacingDir: Direction | null
+  /** Time accumulated in IDLE state for breathing sine wave */
+  idleTimer: number
+  /** Pause range min from current wander destination POI */
+  wanderPauseMin: number
+  /** Pause range max from current wander destination POI */
+  wanderPauseMax: number
+  /** Number of active tools (for typing intensity) */
+  activeToolCount: number
+  /** ID of character currently greeting, or null */
+  greetingTarget: number | null
+  /** Countdown timer for greeting duration */
+  greetingTimer: number
+  /** Per-agent cooldowns: agentId → remaining cooldown seconds */
+  greetingCooldowns: Map<number, number>
 }

@@ -101,13 +101,14 @@ export function processTranscriptLine(
 		} else if (record.type === 'user') {
 			const content = record.message?.content;
 			if (Array.isArray(content)) {
-				const blocks = content as Array<{ type: string; tool_use_id?: string }>;
+				const blocks = content as Array<{ type: string; tool_use_id?: string; is_error?: boolean }>;
 				const hasToolResult = blocks.some(b => b.type === 'tool_result');
 				if (hasToolResult) {
 					for (const block of blocks) {
 						if (block.type === 'tool_result' && block.tool_use_id) {
 							console.log(`[Pixel Agents] Agent ${agentId} tool done: ${block.tool_use_id}`);
 							const completedToolId = block.tool_use_id;
+							const isError = block.is_error === true;
 							// If the completed tool was a Task, clear its subagent tools
 							if (agent.activeToolNames.get(completedToolId) === 'Task') {
 								agent.activeSubagentToolIds.delete(completedToolId);
@@ -127,6 +128,7 @@ export function processTranscriptLine(
 									type: 'agentToolDone',
 									id: agentId,
 									toolId,
+									isError,
 								});
 							}, TOOL_DONE_DELAY_MS);
 						}
@@ -258,6 +260,7 @@ function processProgressRecord(
 		for (const block of content) {
 			if (block.type === 'tool_result' && block.tool_use_id) {
 				console.log(`[Pixel Agents] Agent ${agentId} subagent tool done: ${block.tool_use_id} (parent: ${parentToolId})`);
+				const isError = (block as { is_error?: boolean }).is_error === true;
 
 				// Remove from tracking
 				const subTools = agent.activeSubagentToolIds.get(parentToolId);
@@ -276,6 +279,7 @@ function processProgressRecord(
 						id: agentId,
 						parentToolId,
 						toolId,
+						isError,
 					});
 				}, 300);
 			}
