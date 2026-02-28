@@ -12,7 +12,7 @@ import {
 	sendLayout,
 	getProjectDirPath,
 } from './agentManager.js';
-import { ensureProjectScan } from './fileWatcher.js';
+import { ensureProjectScan, adoptExistingSessions, adoptTerminalForFile } from './fileWatcher.js';
 import { loadFurnitureAssets, sendAssetsToWebview, loadFloorTiles, sendFloorTilesToWebview, loadWallTiles, sendWallTilesToWebview, loadCharacterSprites, sendCharacterSpritesToWebview, loadDefaultLayout } from './assetLoader.js';
 import { WORKSPACE_KEY_AGENT_SEATS, GLOBAL_KEY_SOUND_ENABLED } from './constants.js';
 import { writeLayoutToFile, readLayoutFromFile, watchLayoutFile } from './layoutPersistence.js';
@@ -34,6 +34,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 	// /clear detection: project-level scan for new JSONL files
 	activeAgentId = { current: null as number | null };
 	knownJsonlFiles = new Set<string>();
+	adoptableFiles = new Set<string>();
 	projectScanTimer = { current: null as ReturnType<typeof setInterval> | null };
 
 	// Bundled default layout (loaded from assets/default-layout.json)
@@ -112,17 +113,24 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 					});
 				}
 
-				// Ensure project scan runs even with no restored agents (to adopt external terminals)
+				// Adopt already-running sessions before seeding knownJsonlFiles
 				const projectDir = getProjectDirPath();
 				const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 				console.log('[Extension] workspaceRoot:', workspaceRoot);
 				console.log('[Extension] projectDir:', projectDir);
 				if (projectDir) {
+					adoptExistingSessions(
+						projectDir, this.knownJsonlFiles, this.adoptableFiles,
+						this.nextAgentId, this.agents, this.activeAgentId,
+						this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
+						this.webview, this.persistAgents,
+					);
+
 					ensureProjectScan(
 						projectDir, this.knownJsonlFiles, this.projectScanTimer, this.activeAgentId,
 						this.nextAgentId, this.agents,
 						this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
-						this.webview, this.persistAgents,
+						this.webview, this.persistAgents, this.adoptableFiles,
 					);
 
 					// Load furniture assets BEFORE sending layout
@@ -274,6 +282,24 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 					this.activeAgentId.current = id;
 					webviewView.webview.postMessage({ type: 'agentSelected', id });
 					break;
+				}
+			}
+
+			// If terminal is unowned and we have deferred adoptable files, adopt one
+			if (this.activeAgentId.current === null && this.adoptableFiles.size > 0) {
+				const pDir = getProjectDirPath();
+				if (pDir) {
+					for (const file of this.adoptableFiles) {
+						this.adoptableFiles.delete(file);
+						this.knownJsonlFiles.add(file);
+						adoptTerminalForFile(
+							terminal, file, pDir,
+							this.nextAgentId, this.agents, this.activeAgentId,
+							this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
+							this.webview, this.persistAgents,
+						);
+						break;
+					}
 				}
 			}
 		});
