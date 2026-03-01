@@ -1,4 +1,15 @@
+import type * as fs from 'fs';
 import type * as vscode from 'vscode';
+
+export const TURN_STATES = {
+	idle: 'idle',
+	thinking: 'thinking',
+	tool_active: 'tool_active',
+	tool_draining: 'tool_draining',
+	text_cooldown: 'text_cooldown',
+} as const;
+
+export type AgentTurnState = typeof TURN_STATES[keyof typeof TURN_STATES];
 
 export interface AgentState {
 	id: number;
@@ -14,7 +25,9 @@ export interface AgentState {
 	activeSubagentToolNames: Map<string, Map<string, string>>; // parentToolId → (subToolId → toolName)
 	isWaiting: boolean;
 	permissionSent: boolean;
-	hadToolsInTurn: boolean;
+	turnState: AgentTurnState;
+	/** Prevents concurrent readNewLines calls from multiple watchers */
+	_reading?: boolean;
 	/** Workspace folder name (only set for multi-root workspaces) */
 	folderName?: string;
 }
@@ -26,4 +39,19 @@ export interface PersistedAgent {
 	projectDir: string;
 	/** Workspace folder name (only set for multi-root workspaces) */
 	folderName?: string;
+}
+
+export interface AgentContext {
+	agents: Map<number, AgentState>;
+	nextAgentIdRef: { current: number };
+	activeAgentIdRef: { current: number | null };
+	knownJsonlFiles: Set<string>;
+	adoptableFiles: Set<string>;
+	fileWatchers: Map<number, fs.FSWatcher>;
+	waitingTimers: Map<number, ReturnType<typeof setTimeout>>;
+	permissionTimers: Map<number, ReturnType<typeof setTimeout>>;
+	jsonlPollTimers: Map<number, ReturnType<typeof setInterval>>;
+	projectScanTimerRef: { current: ReturnType<typeof setInterval> | null };
+	webview: vscode.Webview | undefined;
+	persistAgents: () => void;
 }

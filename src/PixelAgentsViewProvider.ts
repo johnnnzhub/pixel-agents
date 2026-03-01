@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import type { AgentState } from './types.js';
+import type { AgentState, AgentContext } from './types.js';
 import {
 	launchNewTerminal,
 	removeAgent,
@@ -17,31 +17,35 @@ import { loadFurnitureAssets, sendAssetsToWebview, loadFloorTiles, sendFloorTile
 import { WORKSPACE_KEY_AGENT_SEATS, GLOBAL_KEY_SOUND_ENABLED } from './constants.js';
 import { writeLayoutToFile, readLayoutFromFile, watchLayoutFile } from './layoutPersistence.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
+import { log } from './logger.js';
 
 export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
-	nextAgentId = { current: 1 };
-	nextTerminalIndex = { current: 1 };
-	agents = new Map<number, AgentState>();
-	webviewView: vscode.WebviewView | undefined;
-
-	// Per-agent timers
-	fileWatchers = new Map<number, fs.FSWatcher>();
-	pollingTimers = new Map<number, ReturnType<typeof setInterval>>();
-	waitingTimers = new Map<number, ReturnType<typeof setTimeout>>();
-	jsonlPollTimers = new Map<number, ReturnType<typeof setInterval>>();
-	permissionTimers = new Map<number, ReturnType<typeof setTimeout>>();
-
-	// /clear detection: project-level scan for new JSONL files
-	activeAgentId = { current: null as number | null };
-	knownJsonlFiles = new Set<string>();
-	adoptableFiles = new Set<string>();
-	projectScanTimer = { current: null as ReturnType<typeof setInterval> | null };
+	private nextTerminalIndex = { current: 1 };
+	private webviewView: vscode.WebviewView | undefined;
 
 	// Bundled default layout (loaded from assets/default-layout.json)
-	defaultLayout: Record<string, unknown> | null = null;
+	private defaultLayout: Record<string, unknown> | null = null;
 
 	// Cross-window layout sync
-	layoutWatcher: LayoutWatcher | null = null;
+	private layoutWatcher: LayoutWatcher | null = null;
+
+	// Unified agent context — passed to all helper functions
+	private ctx: AgentContext = {
+		agents: new Map<number, AgentState>(),
+		nextAgentIdRef: { current: 1 },
+		activeAgentIdRef: { current: null },
+		knownJsonlFiles: new Set<string>(),
+		adoptableFiles: new Set<string>(),
+		fileWatchers: new Map<number, fs.FSWatcher>(),
+		waitingTimers: new Map<number, ReturnType<typeof setTimeout>>(),
+		permissionTimers: new Map<number, ReturnType<typeof setTimeout>>(),
+		jsonlPollTimers: new Map<number, ReturnType<typeof setInterval>>(),
+		projectScanTimerRef: { current: null },
+		webview: undefined,
+		persistAgents: () => {
+			persistAgents(this.ctx.agents, this.context);
+		},
+	};
 
 	constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -49,42 +53,31 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 		return this.context.extensionUri;
 	}
 
-	private get webview(): vscode.Webview | undefined {
-		return this.webviewView?.webview;
-	}
-
-	private persistAgents = (): void => {
-		persistAgents(this.agents, this.context);
-	};
-
 	resolveWebviewView(webviewView: vscode.WebviewView) {
 		this.webviewView = webviewView;
+		this.ctx.webview = webviewView.webview;
 		webviewView.webview.options = { enableScripts: true };
 		webviewView.webview.html = getWebviewContent(webviewView.webview, this.extensionUri);
 
 		webviewView.webview.onDidReceiveMessage(async (message) => {
 			if (message.type === 'openClaude') {
 				await launchNewTerminal(
-					this.nextAgentId, this.nextTerminalIndex,
-					this.agents, this.activeAgentId, this.knownJsonlFiles,
-					this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
-					this.jsonlPollTimers, this.projectScanTimer,
-					this.webview, this.persistAgents,
+					this.nextTerminalIndex, this.ctx,
 					message.folderPath as string | undefined,
 				);
 			} else if (message.type === 'focusAgent') {
-				const agent = this.agents.get(message.id);
+				const agent = this.ctx.agents.get(message.id);
 				if (agent) {
 					agent.terminalRef.show();
 				}
 			} else if (message.type === 'closeAgent') {
-				const agent = this.agents.get(message.id);
+				const agent = this.ctx.agents.get(message.id);
 				if (agent) {
 					agent.terminalRef.dispose();
 				}
 			} else if (message.type === 'saveAgentSeats') {
 				// Store seat assignments in a separate key (never touched by persistAgents)
-				console.log(`[Pixel Agents] saveAgentSeats:`, JSON.stringify(message.seats));
+				log.info('saveAgentSeats:', JSON.stringify(message.seats));
 				this.context.workspaceState.update(WORKSPACE_KEY_AGENT_SEATS, message.seats);
 			} else if (message.type === 'saveLayout') {
 				this.layoutWatcher?.markOwnWrite();
@@ -92,22 +85,15 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 			} else if (message.type === 'setSoundEnabled') {
 				this.context.globalState.update(GLOBAL_KEY_SOUND_ENABLED, message.enabled);
 			} else if (message.type === 'webviewReady') {
-				restoreAgents(
-					this.context,
-					this.nextAgentId, this.nextTerminalIndex,
-					this.agents, this.knownJsonlFiles,
-					this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
-					this.jsonlPollTimers, this.projectScanTimer, this.activeAgentId,
-					this.webview, this.persistAgents,
-				);
+				restoreAgents(this.context, this.nextTerminalIndex, this.ctx);
 				// Send persisted settings to webview
 				const soundEnabled = this.context.globalState.get<boolean>(GLOBAL_KEY_SOUND_ENABLED, true);
-				this.webview?.postMessage({ type: 'settingsLoaded', soundEnabled });
+				this.ctx.webview?.postMessage({ type: 'settingsLoaded', soundEnabled });
 
 				// Send workspace folders to webview (only when multi-root)
 				const wsFolders = vscode.workspace.workspaceFolders;
 				if (wsFolders && wsFolders.length > 1) {
-					this.webview?.postMessage({
+					this.ctx.webview?.postMessage({
 						type: 'workspaceFolders',
 						folders: wsFolders.map(f => ({ name: f.name, path: f.uri.fsPath })),
 					});
@@ -116,89 +102,78 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 				// Adopt already-running sessions before seeding knownJsonlFiles
 				const projectDir = getProjectDirPath();
 				const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-				console.log('[Extension] workspaceRoot:', workspaceRoot);
-				console.log('[Extension] projectDir:', projectDir);
+				log.debug(' workspaceRoot:', workspaceRoot);
+				log.debug(' projectDir:', projectDir);
 				if (projectDir) {
-					adoptExistingSessions(
-						projectDir, this.knownJsonlFiles, this.adoptableFiles,
-						this.nextAgentId, this.agents, this.activeAgentId,
-						this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
-						this.webview, this.persistAgents,
-					);
-
-					ensureProjectScan(
-						projectDir, this.knownJsonlFiles, this.projectScanTimer, this.activeAgentId,
-						this.nextAgentId, this.agents,
-						this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
-						this.webview, this.persistAgents, this.adoptableFiles,
-					);
+					adoptExistingSessions(projectDir, this.ctx);
+					ensureProjectScan(projectDir, this.ctx);
 
 					// Load furniture assets BEFORE sending layout
 					(async () => {
 						try {
-							console.log('[Extension] Loading furniture assets...');
+							log.debug(' Loading furniture assets...');
 							const extensionPath = this.extensionUri.fsPath;
-							console.log('[Extension] extensionPath:', extensionPath);
+							log.debug(' extensionPath:', extensionPath);
 
 							// Check bundled location first: extensionPath/dist/assets/
 							const bundledAssetsDir = path.join(extensionPath, 'dist', 'assets');
 							let assetsRoot: string | null = null;
 							if (fs.existsSync(bundledAssetsDir)) {
-								console.log('[Extension] Found bundled assets at dist/');
+								log.debug(' Found bundled assets at dist/');
 								assetsRoot = path.join(extensionPath, 'dist');
 							} else if (workspaceRoot) {
 								// Fall back to workspace root (development or external assets)
-								console.log('[Extension] Trying workspace for assets...');
+								log.debug(' Trying workspace for assets...');
 								assetsRoot = workspaceRoot;
 							}
 
 							if (!assetsRoot) {
-								console.log('[Extension] ⚠️  No assets directory found');
-								if (this.webview) {
-									sendLayout(this.context, this.webview, this.defaultLayout);
+								log.debug(' ⚠️  No assets directory found');
+								if (this.ctx.webview) {
+									sendLayout(this.context, this.ctx.webview, this.defaultLayout);
 									this.startLayoutWatcher();
 								}
 								return;
 							}
 
-							console.log('[Extension] Using assetsRoot:', assetsRoot);
+							log.debug(' Using assetsRoot:', assetsRoot);
 
 							// Load bundled default layout
 							this.defaultLayout = loadDefaultLayout(assetsRoot);
 
 							// Load character sprites
 							const charSprites = await loadCharacterSprites(assetsRoot);
-							if (charSprites && this.webview) {
-								console.log('[Extension] Character sprites loaded, sending to webview');
-								sendCharacterSpritesToWebview(this.webview, charSprites);
+							if (charSprites && this.ctx.webview) {
+								log.debug(' Character sprites loaded, sending to webview');
+								sendCharacterSpritesToWebview(this.ctx.webview, charSprites);
 							}
 
 							// Load floor tiles
 							const floorTiles = await loadFloorTiles(assetsRoot);
-							if (floorTiles && this.webview) {
-								console.log('[Extension] Floor tiles loaded, sending to webview');
-								sendFloorTilesToWebview(this.webview, floorTiles);
+							if (floorTiles && this.ctx.webview) {
+								log.debug(' Floor tiles loaded, sending to webview');
+								sendFloorTilesToWebview(this.ctx.webview, floorTiles);
 							}
 
 							// Load wall tiles
 							const wallTiles = await loadWallTiles(assetsRoot);
-							if (wallTiles && this.webview) {
-								console.log('[Extension] Wall tiles loaded, sending to webview');
-								sendWallTilesToWebview(this.webview, wallTiles);
+							if (wallTiles && this.ctx.webview) {
+								log.debug(' Wall tiles loaded, sending to webview');
+								sendWallTilesToWebview(this.ctx.webview, wallTiles);
 							}
 
 							const assets = await loadFurnitureAssets(assetsRoot);
-							if (assets && this.webview) {
-								console.log('[Extension] ✅ Assets loaded, sending to webview');
-								sendAssetsToWebview(this.webview, assets);
+							if (assets && this.ctx.webview) {
+								log.debug(' ✅ Assets loaded, sending to webview');
+								sendAssetsToWebview(this.ctx.webview, assets);
 							}
 						} catch (err) {
-							console.error('[Extension] ❌ Error loading assets:', err);
+							log.error(' ❌ Error loading assets:', err);
 						}
 						// Always send saved layout (or null for default)
-						if (this.webview) {
-							console.log('[Extension] Sending saved layout');
-							sendLayout(this.context, this.webview, this.defaultLayout);
+						if (this.ctx.webview) {
+							log.debug(' Sending saved layout');
+							sendLayout(this.context, this.ctx.webview, this.defaultLayout);
 							this.startLayoutWatcher();
 						}
 					})();
@@ -212,26 +187,26 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 								const distRoot = path.join(ep, 'dist');
 								this.defaultLayout = loadDefaultLayout(distRoot);
 								const cs = await loadCharacterSprites(distRoot);
-								if (cs && this.webview) {
-									sendCharacterSpritesToWebview(this.webview, cs);
+								if (cs && this.ctx.webview) {
+									sendCharacterSpritesToWebview(this.ctx.webview, cs);
 								}
 								const ft = await loadFloorTiles(distRoot);
-								if (ft && this.webview) {
-									sendFloorTilesToWebview(this.webview, ft);
+								if (ft && this.ctx.webview) {
+									sendFloorTilesToWebview(this.ctx.webview, ft);
 								}
 								const wt = await loadWallTiles(distRoot);
-								if (wt && this.webview) {
-									sendWallTilesToWebview(this.webview, wt);
+								if (wt && this.ctx.webview) {
+									sendWallTilesToWebview(this.ctx.webview, wt);
 								}
 							}
 						} catch { /* ignore */ }
-						if (this.webview) {
-							sendLayout(this.context, this.webview, this.defaultLayout);
+						if (this.ctx.webview) {
+							sendLayout(this.context, this.ctx.webview, this.defaultLayout);
 							this.startLayoutWatcher();
 						}
 					})();
 				}
-				sendExistingAgents(this.agents, this.context, this.webview);
+				sendExistingAgents(this.ctx.agents, this.context, this.ctx.webview);
 			} else if (message.type === 'openSessionsFolder') {
 				const projectDir = getProjectDirPath();
 				if (projectDir && fs.existsSync(projectDir)) {
@@ -266,7 +241,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 					}
 					this.layoutWatcher?.markOwnWrite();
 					writeLayoutToFile(imported);
-					this.webview?.postMessage({ type: 'layoutLoaded', layout: imported });
+					this.ctx.webview?.postMessage({ type: 'layoutLoaded', layout: imported });
 					vscode.window.showInformationMessage('Pixel Agents: Layout imported successfully.');
 				} catch {
 					vscode.window.showErrorMessage('Pixel Agents: Failed to read or parse layout file.');
@@ -275,49 +250,46 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 		});
 
 		vscode.window.onDidChangeActiveTerminal((terminal) => {
-			this.activeAgentId.current = null;
+			this.ctx.activeAgentIdRef.current = null;
 			if (!terminal) {return;}
-			for (const [id, agent] of this.agents) {
+			for (const [id, agent] of this.ctx.agents) {
 				if (agent.terminalRef === terminal) {
-					this.activeAgentId.current = id;
+					this.ctx.activeAgentIdRef.current = id;
 					webviewView.webview.postMessage({ type: 'agentSelected', id });
 					break;
 				}
 			}
 
 			// If terminal is unowned and we have deferred adoptable files, adopt one
-			if (this.activeAgentId.current === null && this.adoptableFiles.size > 0) {
+			if (this.ctx.activeAgentIdRef.current === null && this.ctx.adoptableFiles.size > 0) {
 				const pDir = getProjectDirPath();
 				if (pDir) {
-					for (const file of this.adoptableFiles) {
-						this.adoptableFiles.delete(file);
-						this.knownJsonlFiles.add(file);
-						adoptTerminalForFile(
-							terminal, file, pDir,
-							this.nextAgentId, this.agents, this.activeAgentId,
-							this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
-							this.webview, this.persistAgents,
-						);
+					for (const file of this.ctx.adoptableFiles) {
+						this.ctx.adoptableFiles.delete(file);
+						this.ctx.knownJsonlFiles.add(file);
+						adoptTerminalForFile(terminal, file, pDir, this.ctx);
 						break;
 					}
 				}
 			}
 		});
 
+		// Debounce terminal close to absorb rapid close/reopen cycles
+		let closeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 		vscode.window.onDidCloseTerminal((closed) => {
-			for (const [id, agent] of this.agents) {
-				if (agent.terminalRef === closed) {
-					if (this.activeAgentId.current === id) {
-						this.activeAgentId.current = null;
+			if (closeDebounceTimer) {clearTimeout(closeDebounceTimer);}
+			closeDebounceTimer = setTimeout(() => {
+				closeDebounceTimer = null;
+				for (const [id, agent] of this.ctx.agents) {
+					if (agent.terminalRef === closed) {
+						if (this.ctx.activeAgentIdRef.current === id) {
+							this.ctx.activeAgentIdRef.current = null;
+						}
+						removeAgent(id, this.ctx);
+						webviewView.webview.postMessage({ type: 'agentClosed', id });
 					}
-					removeAgent(
-						id, this.agents,
-						this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
-						this.jsonlPollTimers, this.persistAgents,
-					);
-					webviewView.webview.postMessage({ type: 'agentClosed', id });
 				}
-			}
+			}, 300);
 		});
 	}
 
@@ -342,24 +314,20 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 	private startLayoutWatcher(): void {
 		if (this.layoutWatcher) {return;}
 		this.layoutWatcher = watchLayoutFile((layout) => {
-			console.log('[Pixel Agents] External layout change — pushing to webview');
-			this.webview?.postMessage({ type: 'layoutLoaded', layout });
+			log.info(' External layout change — pushing to webview');
+			this.ctx.webview?.postMessage({ type: 'layoutLoaded', layout });
 		});
 	}
 
 	dispose() {
 		this.layoutWatcher?.dispose();
 		this.layoutWatcher = null;
-		for (const id of [...this.agents.keys()]) {
-			removeAgent(
-				id, this.agents,
-				this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
-				this.jsonlPollTimers, this.persistAgents,
-			);
+		for (const id of [...this.ctx.agents.keys()]) {
+			removeAgent(id, this.ctx);
 		}
-		if (this.projectScanTimer.current) {
-			clearInterval(this.projectScanTimer.current);
-			this.projectScanTimer.current = null;
+		if (this.ctx.projectScanTimerRef.current) {
+			clearInterval(this.ctx.projectScanTimerRef.current);
+			this.ctx.projectScanTimerRef.current = null;
 		}
 	}
 }

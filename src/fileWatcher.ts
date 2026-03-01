@@ -1,61 +1,57 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import type { AgentState } from './types.js';
+import type { AgentState, AgentContext } from './types.js';
 import { cancelWaitingTimer, cancelPermissionTimer, clearAgentActivity } from './timerManager.js';
 import { processTranscriptLine } from './transcriptParser.js';
 import { FILE_WATCHER_POLL_INTERVAL_MS, PROJECT_SCAN_INTERVAL_MS, ADOPT_RECENT_THRESHOLD_MS } from './constants.js';
+import { log } from './logger.js';
+
+const isMacOS = process.platform === 'darwin';
 
 export function startFileWatching(
 	agentId: number,
 	filePath: string,
-	agents: Map<number, AgentState>,
-	fileWatchers: Map<number, fs.FSWatcher>,
-	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
-	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
-	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
+	ctx: AgentContext,
 ): void {
-	// Primary: fs.watch (unreliable on macOS — may miss events)
-	try {
-		const watcher = fs.watch(filePath, () => {
-			readNewLines(agentId, agents, waitingTimers, permissionTimers, webview);
-		});
-		fileWatchers.set(agentId, watcher);
-	} catch (e) {
-		console.log(`[Pixel Agents] fs.watch failed for agent ${agentId}: ${e}`);
-	}
-
-	// Secondary: fs.watchFile (stat-based polling, reliable on macOS)
-	try {
-		fs.watchFile(filePath, { interval: FILE_WATCHER_POLL_INTERVAL_MS }, () => {
-			readNewLines(agentId, agents, waitingTimers, permissionTimers, webview);
-		});
-	} catch (e) {
-		console.log(`[Pixel Agents] fs.watchFile failed for agent ${agentId}: ${e}`);
-	}
-
-	// Tertiary: manual poll as last resort
-	const interval = setInterval(() => {
-		if (!agents.has(agentId)) {
-			clearInterval(interval);
-			try { fs.unwatchFile(filePath); } catch { /* ignore */ }
-			return;
+	if (isMacOS) {
+		// macOS: fs.watch is unreliable — use fs.watchFile (stat-based polling)
+		try {
+			fs.watchFile(filePath, { interval: FILE_WATCHER_POLL_INTERVAL_MS }, () => {
+				readNewLines(agentId, ctx);
+			});
+		} catch (e) {
+			log.warn(`fs.watchFile failed for agent ${agentId}:`, e);
 		}
-		readNewLines(agentId, agents, waitingTimers, permissionTimers, webview);
-	}, FILE_WATCHER_POLL_INTERVAL_MS);
-	pollingTimers.set(agentId, interval);
+	} else {
+		// Windows/Linux: fs.watch is event-based and reliable
+		try {
+			const watcher = fs.watch(filePath, () => {
+				readNewLines(agentId, ctx);
+			});
+			ctx.fileWatchers.set(agentId, watcher);
+		} catch (e) {
+			log.warn(`fs.watch failed for agent ${agentId}:`, e);
+		}
+	}
+}
+
+export function stopFileWatching(agentId: number, filePath: string, ctx: AgentContext): void {
+	// Stop fs.watch (Windows/Linux)
+	ctx.fileWatchers.get(agentId)?.close();
+	ctx.fileWatchers.delete(agentId);
+	// Stop fs.watchFile (macOS)
+	try { fs.unwatchFile(filePath); } catch { log.debug('unwatchFile ignored (already removed)'); }
 }
 
 export function readNewLines(
 	agentId: number,
-	agents: Map<number, AgentState>,
-	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
-	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
+	ctx: AgentContext,
 ): void {
-	const agent = agents.get(agentId);
+	const agent = ctx.agents.get(agentId);
 	if (!agent) {return;}
+	if (agent._reading) {return;}
+	agent._reading = true;
 	try {
 		const stat = fs.statSync(agent.jsonlFile);
 		if (stat.size <= agent.fileOffset) {return;}
@@ -73,20 +69,22 @@ export function readNewLines(
 		const hasLines = lines.some(l => l.trim());
 		if (hasLines) {
 			// New data arriving — cancel timers (data flowing means agent is still active)
-			cancelWaitingTimer(agentId, waitingTimers);
-			cancelPermissionTimer(agentId, permissionTimers);
+			cancelWaitingTimer(agentId, ctx);
+			cancelPermissionTimer(agentId, ctx);
 			if (agent.permissionSent) {
 				agent.permissionSent = false;
-				webview?.postMessage({ type: 'agentToolPermissionClear', id: agentId });
+				ctx.webview?.postMessage({ type: 'agentToolPermissionClear', id: agentId });
 			}
 		}
 
 		for (const line of lines) {
 			if (!line.trim()) {continue;}
-			processTranscriptLine(agentId, line, agents, waitingTimers, permissionTimers, webview);
+			processTranscriptLine(agentId, line, ctx);
 		}
 	} catch (e) {
-		console.log(`[Pixel Agents] Read error for agent ${agentId}: ${e}`);
+		log.error(`Read error for agent ${agentId}:`, e);
+	} finally {
+		agent._reading = false;
 	}
 }
 
@@ -99,28 +97,18 @@ function isTerminalOwned(terminal: vscode.Terminal, agents: Map<number, AgentSta
 
 export function adoptExistingSessions(
 	projectDir: string,
-	knownJsonlFiles: Set<string>,
-	adoptableFiles: Set<string>,
-	nextAgentIdRef: { current: number },
-	agents: Map<number, AgentState>,
-	activeAgentIdRef: { current: number | null },
-	fileWatchers: Map<number, fs.FSWatcher>,
-	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
-	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
-	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
-	persistAgents: () => void,
+	ctx: AgentContext,
 ): void {
 	let files: string[];
 	try {
 		files = fs.readdirSync(projectDir)
 			.filter(f => f.endsWith('.jsonl'))
 			.map(f => path.join(projectDir, f));
-	} catch { return; }
+	} catch { log.debug('Project dir not readable:', projectDir); return; }
 
 	const now = Date.now();
 	const recentFiles = files.filter(f => {
-		if (knownJsonlFiles.has(f)) {return false;}
+		if (ctx.knownJsonlFiles.has(f)) {return false;}
 		try {
 			const stat = fs.statSync(f);
 			return (now - stat.mtimeMs) < ADOPT_RECENT_THRESHOLD_MS;
@@ -130,93 +118,66 @@ export function adoptExistingSessions(
 	if (recentFiles.length === 0) {return;}
 
 	// Collect unowned terminals
-	const unownedTerminals = vscode.window.terminals.filter(t => !isTerminalOwned(t, agents));
+	const unownedTerminals = vscode.window.terminals.filter(t => !isTerminalOwned(t, ctx.agents));
 
-	// Pair sequentially: one file per unowned terminal
-	let termIdx = 0;
+	// Match by session ID: JSONL filename = <uuid>.jsonl, terminal may contain session UUID
 	for (const file of recentFiles) {
-		if (termIdx < unownedTerminals.length) {
-			knownJsonlFiles.add(file);
-			adoptTerminalForFile(
-				unownedTerminals[termIdx], file, projectDir,
-				nextAgentIdRef, agents, activeAgentIdRef,
-				fileWatchers, pollingTimers, waitingTimers, permissionTimers,
-				webview, persistAgents,
-			);
-			termIdx++;
+		const sessionId = path.basename(file, '.jsonl');
+		// Try session-based matching first (terminal name may contain the session UUID)
+		const matchedTerminal = unownedTerminals.find(t => t.name.includes(sessionId));
+		if (matchedTerminal) {
+			ctx.knownJsonlFiles.add(file);
+			adoptTerminalForFile(matchedTerminal, file, projectDir, ctx);
+			// Remove from unowned pool
+			const idx = unownedTerminals.indexOf(matchedTerminal);
+			if (idx !== -1) {unownedTerminals.splice(idx, 1);}
+		} else if (unownedTerminals.length > 0) {
+			// Fallback: pair with first available unowned terminal
+			ctx.knownJsonlFiles.add(file);
+			adoptTerminalForFile(unownedTerminals.shift()!, file, projectDir, ctx);
 		} else {
 			// No terminal available — defer for later
-			adoptableFiles.add(file);
+			ctx.adoptableFiles.add(file);
 		}
 	}
 
-	if (adoptableFiles.size > 0) {
-		console.log(`[Pixel Agents] ${adoptableFiles.size} session(s) deferred — waiting for terminal focus`);
+	if (ctx.adoptableFiles.size > 0) {
+		log.info(` ${ctx.adoptableFiles.size} session(s) deferred — waiting for terminal focus`);
 	}
 }
 
 export function ensureProjectScan(
 	projectDir: string,
-	knownJsonlFiles: Set<string>,
-	projectScanTimerRef: { current: ReturnType<typeof setInterval> | null },
-	activeAgentIdRef: { current: number | null },
-	nextAgentIdRef: { current: number },
-	agents: Map<number, AgentState>,
-	fileWatchers: Map<number, fs.FSWatcher>,
-	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
-	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
-	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
-	persistAgents: () => void,
-	adoptableFiles?: Set<string>,
+	ctx: AgentContext,
 ): void {
-	if (projectScanTimerRef.current) {return;}
+	if (ctx.projectScanTimerRef.current) {return;}
 	// Seed with all existing JSONL files so we only react to truly new ones
 	try {
 		const files = fs.readdirSync(projectDir)
 			.filter(f => f.endsWith('.jsonl'))
 			.map(f => path.join(projectDir, f));
 		for (const f of files) {
-			knownJsonlFiles.add(f);
+			ctx.knownJsonlFiles.add(f);
 		}
-	} catch { /* dir may not exist yet */ }
+	} catch { log.debug('Project dir not yet created:', projectDir); }
 
-	projectScanTimerRef.current = setInterval(() => {
-		scanForNewJsonlFiles(
-			projectDir, knownJsonlFiles, activeAgentIdRef, nextAgentIdRef,
-			agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers,
-			webview, persistAgents, adoptableFiles,
-		);
+	ctx.projectScanTimerRef.current = setInterval(() => {
+		scanForNewJsonlFiles(projectDir, ctx);
 	}, PROJECT_SCAN_INTERVAL_MS);
 }
 
 function scanForNewJsonlFiles(
 	projectDir: string,
-	knownJsonlFiles: Set<string>,
-	activeAgentIdRef: { current: number | null },
-	nextAgentIdRef: { current: number },
-	agents: Map<number, AgentState>,
-	fileWatchers: Map<number, fs.FSWatcher>,
-	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
-	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
-	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
-	persistAgents: () => void,
-	adoptableFiles?: Set<string>,
+	ctx: AgentContext,
 ): void {
 	// Check deferred adoptable files against unowned active terminal (one per tick)
-	if (adoptableFiles && adoptableFiles.size > 0) {
+	if (ctx.adoptableFiles.size > 0) {
 		const activeTerminal = vscode.window.activeTerminal;
-		if (activeTerminal && !isTerminalOwned(activeTerminal, agents)) {
-			for (const file of adoptableFiles) {
-				adoptableFiles.delete(file);
-				knownJsonlFiles.add(file);
-				adoptTerminalForFile(
-					activeTerminal, file, projectDir,
-					nextAgentIdRef, agents, activeAgentIdRef,
-					fileWatchers, pollingTimers, waitingTimers, permissionTimers,
-					webview, persistAgents,
-				);
+		if (activeTerminal && !isTerminalOwned(activeTerminal, ctx.agents)) {
+			for (const file of ctx.adoptableFiles) {
+				ctx.adoptableFiles.delete(file);
+				ctx.knownJsonlFiles.add(file);
+				adoptTerminalForFile(activeTerminal, file, projectDir, ctx);
 				break; // one per tick
 			}
 		}
@@ -227,32 +188,23 @@ function scanForNewJsonlFiles(
 		files = fs.readdirSync(projectDir)
 			.filter(f => f.endsWith('.jsonl'))
 			.map(f => path.join(projectDir, f));
-	} catch { return; }
+	} catch { log.debug('Scan dir not readable:', projectDir); return; }
 
 	for (const file of files) {
-		if (!knownJsonlFiles.has(file)) {
-			knownJsonlFiles.add(file);
-			if (activeAgentIdRef.current !== null) {
+		if (!ctx.knownJsonlFiles.has(file)) {
+			ctx.knownJsonlFiles.add(file);
+			if (ctx.activeAgentIdRef.current !== null) {
 				// Active agent focused → /clear reassignment
-				console.log(`[Pixel Agents] New JSONL detected: ${path.basename(file)}, reassigning to agent ${activeAgentIdRef.current}`);
-				reassignAgentToFile(
-					activeAgentIdRef.current, file,
-					agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers,
-					webview, persistAgents,
-				);
+				log.info(` New JSONL detected: ${path.basename(file)}, reassigning to agent ${ctx.activeAgentIdRef.current}`);
+				reassignAgentToFile(ctx.activeAgentIdRef.current, file, ctx);
 			} else {
 				// No active agent → try to adopt the focused terminal
 				const activeTerminal = vscode.window.activeTerminal;
-				if (activeTerminal && !isTerminalOwned(activeTerminal, agents)) {
-					adoptTerminalForFile(
-						activeTerminal, file, projectDir,
-						nextAgentIdRef, agents, activeAgentIdRef,
-						fileWatchers, pollingTimers, waitingTimers, permissionTimers,
-						webview, persistAgents,
-					);
-				} else if (adoptableFiles) {
+				if (activeTerminal && !isTerminalOwned(activeTerminal, ctx.agents)) {
+					adoptTerminalForFile(activeTerminal, file, projectDir, ctx);
+				} else {
 					// Can't adopt now — defer
-					adoptableFiles.add(file);
+					ctx.adoptableFiles.add(file);
 				}
 			}
 		}
@@ -263,17 +215,9 @@ export function adoptTerminalForFile(
 	terminal: vscode.Terminal,
 	jsonlFile: string,
 	projectDir: string,
-	nextAgentIdRef: { current: number },
-	agents: Map<number, AgentState>,
-	activeAgentIdRef: { current: number | null },
-	fileWatchers: Map<number, fs.FSWatcher>,
-	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
-	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
-	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
-	persistAgents: () => void,
+	ctx: AgentContext,
 ): void {
-	const id = nextAgentIdRef.current++;
+	const id = ctx.nextAgentIdRef.current++;
 	const agent: AgentState = {
 		id,
 		terminalRef: terminal,
@@ -288,54 +232,43 @@ export function adoptTerminalForFile(
 		activeSubagentToolNames: new Map(),
 		isWaiting: false,
 		permissionSent: false,
-		hadToolsInTurn: false,
+		turnState: 'idle',
 	};
 
-	agents.set(id, agent);
-	activeAgentIdRef.current = id;
-	persistAgents();
+	ctx.agents.set(id, agent);
+	ctx.activeAgentIdRef.current = id;
+	ctx.persistAgents();
 
-	console.log(`[Pixel Agents] Agent ${id}: adopted terminal "${terminal.name}" for ${path.basename(jsonlFile)}`);
-	webview?.postMessage({ type: 'agentCreated', id });
+	log.info(`Agent ${id}: adopted terminal "${terminal.name}" for ${path.basename(jsonlFile)}`);
+	ctx.webview?.postMessage({ type: 'agentCreated', id });
 
-	startFileWatching(id, jsonlFile, agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers, webview);
-	readNewLines(id, agents, waitingTimers, permissionTimers, webview);
+	startFileWatching(id, jsonlFile, ctx);
+	readNewLines(id, ctx);
 }
 
 export function reassignAgentToFile(
 	agentId: number,
 	newFilePath: string,
-	agents: Map<number, AgentState>,
-	fileWatchers: Map<number, fs.FSWatcher>,
-	pollingTimers: Map<number, ReturnType<typeof setInterval>>,
-	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
-	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
-	persistAgents: () => void,
+	ctx: AgentContext,
 ): void {
-	const agent = agents.get(agentId);
+	const agent = ctx.agents.get(agentId);
 	if (!agent) {return;}
 
 	// Stop old file watching
-	fileWatchers.get(agentId)?.close();
-	fileWatchers.delete(agentId);
-	const pt = pollingTimers.get(agentId);
-	if (pt) { clearInterval(pt); }
-	pollingTimers.delete(agentId);
-	try { fs.unwatchFile(agent.jsonlFile); } catch { /* ignore */ }
+	stopFileWatching(agentId, agent.jsonlFile, ctx);
 
 	// Clear activity
-	cancelWaitingTimer(agentId, waitingTimers);
-	cancelPermissionTimer(agentId, permissionTimers);
-	clearAgentActivity(agent, agentId, permissionTimers, webview);
+	cancelWaitingTimer(agentId, ctx);
+	cancelPermissionTimer(agentId, ctx);
+	clearAgentActivity(agentId, ctx);
 
 	// Swap to new file
 	agent.jsonlFile = newFilePath;
 	agent.fileOffset = 0;
 	agent.lineBuffer = '';
-	persistAgents();
+	ctx.persistAgents();
 
 	// Start watching new file
-	startFileWatching(agentId, newFilePath, agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers, webview);
-	readNewLines(agentId, agents, waitingTimers, permissionTimers, webview);
+	startFileWatching(agentId, newFilePath, ctx);
+	readNewLines(agentId, ctx);
 }

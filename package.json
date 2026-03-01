@@ -46,6 +46,28 @@
           "name": "Pixel Agents"
         }
       ]
+    },
+    "configuration": {
+      "title": "Pixel Agents",
+      "properties": {
+        "pixel-agents.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable debug logging in the output console"
+        },
+        "pixel-agents.pollInterval": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 200,
+          "maximum": 10000,
+          "description": "File polling interval in milliseconds"
+        },
+        "pixel-agents.soundEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable notification sounds when agents complete tasks"
+        }
+      }
     }
   },
   "scripts": {
@@ -58,7 +80,8 @@
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "package": "npm run check-types && npm run lint && node esbuild.js --production && npm run build:webview",
     "check-types": "tsc --noEmit",
-    "lint": "eslint src",
+    "lint": "eslint src --ignore-pattern __tests__",
+    "test": "vitest run",
     "import-tileset": "tsx scripts/import-tileset-cli.ts"
   },
   "devDependencies": {
@@ -72,6 +95,7 @@
     "pngjs": "^7.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.54.0"
+    "typescript-eslint": "^8.54.0",
+    "vitest": "^4.0.18"
   }
 }

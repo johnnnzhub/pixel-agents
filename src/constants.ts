@@ -1,7 +1,13 @@
+import * as vscode from 'vscode';
+
+function getPollInterval(): number {
+	return vscode.workspace.getConfiguration('pixel-agents').get('pollInterval', 1000);
+}
+
 // ── Timing (ms) ──────────────────────────────────────────────
-export const JSONL_POLL_INTERVAL_MS = 1000;
-export const FILE_WATCHER_POLL_INTERVAL_MS = 1000;
-export const PROJECT_SCAN_INTERVAL_MS = 1000;
+export const JSONL_POLL_INTERVAL_MS = getPollInterval();
+export const FILE_WATCHER_POLL_INTERVAL_MS = getPollInterval();
+export const PROJECT_SCAN_INTERVAL_MS = getPollInterval();
 export const TOOL_DONE_DELAY_MS = 300;
 export const PERMISSION_TIMER_DELAY_MS = 7000;
 export const TEXT_IDLE_DELAY_MS = 5000;

@@ -1,6 +1,5 @@
 import * as path from 'path';
-import type * as vscode from 'vscode';
-import type { AgentState } from './types.js';
+import type { AgentContext } from './types.js';
 import {
 	cancelWaitingTimer,
 	startWaitingTimer,
@@ -14,6 +13,7 @@ import {
 	BASH_COMMAND_DISPLAY_MAX_LENGTH,
 	TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
 } from './constants.js';
+import { log } from './logger.js';
 
 export const PERMISSION_EXEMPT_TOOLS = new Set(['Task', 'AskUserQuestion']);
 
@@ -45,12 +45,9 @@ export function formatToolStatus(toolName: string, input: Record<string, unknown
 export function processTranscriptLine(
 	agentId: number,
 	line: string,
-	agents: Map<number, AgentState>,
-	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
-	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
+	ctx: AgentContext,
 ): void {
-	const agent = agents.get(agentId);
+	const agent = ctx.agents.get(agentId);
 	if (!agent) {return;}
 	try {
 		const record = JSON.parse(line);
@@ -62,23 +59,24 @@ export function processTranscriptLine(
 			const hasToolUse = blocks.some(b => b.type === 'tool_use');
 
 			if (hasToolUse) {
-				cancelWaitingTimer(agentId, waitingTimers);
+				// idle|thinking → tool_active
+				cancelWaitingTimer(agentId, ctx);
 				agent.isWaiting = false;
-				agent.hadToolsInTurn = true;
-				webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
+				agent.turnState = 'tool_active';
+				ctx.webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
 				let hasNonExemptTool = false;
 				for (const block of blocks) {
 					if (block.type === 'tool_use' && block.id) {
 						const toolName = block.name || '';
 						const status = formatToolStatus(toolName, block.input || {});
-						console.log(`[Pixel Agents] Agent ${agentId} tool start: ${block.id} ${status}`);
+						log.info(`Agent ${agentId} tool start: ${block.id} ${status}`);
 						agent.activeToolIds.add(block.id);
 						agent.activeToolStatuses.set(block.id, status);
 						agent.activeToolNames.set(block.id, toolName);
 						if (!PERMISSION_EXEMPT_TOOLS.has(toolName)) {
 							hasNonExemptTool = true;
 						}
-						webview?.postMessage({
+						ctx.webview?.postMessage({
 							type: 'agentToolStart',
 							id: agentId,
 							toolId: block.id,
@@ -87,17 +85,19 @@ export function processTranscriptLine(
 					}
 				}
 				if (hasNonExemptTool) {
-					startPermissionTimer(agentId, agents, permissionTimers, PERMISSION_EXEMPT_TOOLS, webview);
+					startPermissionTimer(agentId, PERMISSION_EXEMPT_TOOLS, ctx);
 				}
-			} else if (blocks.some(b => b.type === 'text') && !agent.hadToolsInTurn) {
-				// Text-only response in a turn that hasn't used any tools.
-				// turn_duration handles tool-using turns reliably but is never
-				// emitted for text-only turns, so we use a silence-based timer:
-				// if no new JSONL data arrives within TEXT_IDLE_DELAY_MS, mark as waiting.
-				startWaitingTimer(agentId, TEXT_IDLE_DELAY_MS, agents, waitingTimers, webview);
+			} else if (blocks.some(b => b.type === 'text')) {
+				if (agent.turnState === 'idle') {
+					// idle → text_cooldown (text-only turn, no tools yet)
+					agent.turnState = 'text_cooldown';
+					startWaitingTimer(agentId, TEXT_IDLE_DELAY_MS, ctx);
+				}
+				// In tool_active/tool_draining states, text blocks are ignored
+				// (turn_duration will handle the turn-end)
 			}
 		} else if (record.type === 'progress') {
-			processProgressRecord(agentId, record, agents, waitingTimers, permissionTimers, webview);
+			processProgressRecord(agentId, record, ctx);
 		} else if (record.type === 'user') {
 			const content = record.message?.content;
 			if (Array.isArray(content)) {
@@ -106,13 +106,13 @@ export function processTranscriptLine(
 				if (hasToolResult) {
 					for (const block of blocks) {
 						if (block.type === 'tool_result' && block.tool_use_id) {
-							console.log(`[Pixel Agents] Agent ${agentId} tool done: ${block.tool_use_id}`);
+							log.info(`Agent ${agentId} tool done: ${block.tool_use_id}`);
 							const completedToolId = block.tool_use_id;
 							// If the completed tool was a Task, clear its subagent tools
 							if (agent.activeToolNames.get(completedToolId) === 'Task') {
 								agent.activeSubagentToolIds.delete(completedToolId);
 								agent.activeSubagentToolNames.delete(completedToolId);
-								webview?.postMessage({
+								ctx.webview?.postMessage({
 									type: 'subagentClear',
 									id: agentId,
 									parentToolId: completedToolId,
@@ -123,7 +123,7 @@ export function processTranscriptLine(
 							agent.activeToolNames.delete(completedToolId);
 							const toolId = completedToolId;
 							setTimeout(() => {
-								webview?.postMessage({
+								ctx.webview?.postMessage({
 									type: 'agentToolDone',
 									id: agentId,
 									toolId,
@@ -131,60 +131,57 @@ export function processTranscriptLine(
 							}, TOOL_DONE_DELAY_MS);
 						}
 					}
-					// All tools completed — allow text-idle timer as fallback
-					// for turn-end detection when turn_duration is not emitted
+					// tool_active → tool_draining when all tools complete
 					if (agent.activeToolIds.size === 0) {
-						agent.hadToolsInTurn = false;
+						agent.turnState = 'tool_draining';
 					}
 				} else {
-					// New user text prompt — new turn starting
-					cancelWaitingTimer(agentId, waitingTimers);
-					clearAgentActivity(agent, agentId, permissionTimers, webview);
-					agent.hadToolsInTurn = false;
+					// New user text prompt — new turn starting → idle
+					cancelWaitingTimer(agentId, ctx);
+					clearAgentActivity(agentId, ctx);
+					agent.turnState = 'idle';
 				}
 			} else if (typeof content === 'string' && content.trim()) {
-				// New user text prompt — new turn starting
-				cancelWaitingTimer(agentId, waitingTimers);
-				clearAgentActivity(agent, agentId, permissionTimers, webview);
-				agent.hadToolsInTurn = false;
+				// New user text prompt — new turn starting → idle
+				cancelWaitingTimer(agentId, ctx);
+				clearAgentActivity(agentId, ctx);
+				agent.turnState = 'idle';
 			}
 		} else if (record.type === 'system' && record.subtype === 'turn_duration') {
-			cancelWaitingTimer(agentId, waitingTimers);
-			cancelPermissionTimer(agentId, permissionTimers);
+			// Definitive turn-end: any state → idle
+			cancelWaitingTimer(agentId, ctx);
+			cancelPermissionTimer(agentId, ctx);
 
-			// Definitive turn-end: clean up any stale tool state
+			// Clean up any stale tool state
 			if (agent.activeToolIds.size > 0) {
 				agent.activeToolIds.clear();
 				agent.activeToolStatuses.clear();
 				agent.activeToolNames.clear();
 				agent.activeSubagentToolIds.clear();
 				agent.activeSubagentToolNames.clear();
-				webview?.postMessage({ type: 'agentToolsClear', id: agentId });
+				ctx.webview?.postMessage({ type: 'agentToolsClear', id: agentId });
 			}
 
 			agent.isWaiting = true;
 			agent.permissionSent = false;
-			agent.hadToolsInTurn = false;
-			webview?.postMessage({
+			agent.turnState = 'idle';
+			ctx.webview?.postMessage({
 				type: 'agentStatus',
 				id: agentId,
 				status: 'waiting',
 			});
 		}
-	} catch {
-		// Ignore malformed lines
+	} catch (e) {
+		log.warn('Malformed JSONL line:', e);
 	}
 }
 
 function processProgressRecord(
 	agentId: number,
 	record: Record<string, unknown>,
-	agents: Map<number, AgentState>,
-	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
-	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
+	ctx: AgentContext,
 ): void {
-	const agent = agents.get(agentId);
+	const agent = ctx.agents.get(agentId);
 	if (!agent) {return;}
 
 	const parentToolId = record.parentToolUseID as string | undefined;
@@ -198,7 +195,7 @@ function processProgressRecord(
 	const dataType = data.type as string | undefined;
 	if (dataType === 'bash_progress' || dataType === 'mcp_progress') {
 		if (agent.activeToolIds.has(parentToolId)) {
-			startPermissionTimer(agentId, agents, permissionTimers, PERMISSION_EXEMPT_TOOLS, webview);
+			startPermissionTimer(agentId, PERMISSION_EXEMPT_TOOLS, ctx);
 		}
 		return;
 	}
@@ -220,7 +217,7 @@ function processProgressRecord(
 			if (block.type === 'tool_use' && block.id) {
 				const toolName = block.name || '';
 				const status = formatToolStatus(toolName, block.input || {});
-				console.log(`[Pixel Agents] Agent ${agentId} subagent tool start: ${block.id} ${status} (parent: ${parentToolId})`);
+				log.info(` Agent ${agentId} subagent tool start: ${block.id} ${status} (parent: ${parentToolId})`);
 
 				// Track sub-tool IDs
 				let subTools = agent.activeSubagentToolIds.get(parentToolId);
@@ -242,7 +239,7 @@ function processProgressRecord(
 					hasNonExemptSubTool = true;
 				}
 
-				webview?.postMessage({
+				ctx.webview?.postMessage({
 					type: 'subagentToolStart',
 					id: agentId,
 					parentToolId,
@@ -252,12 +249,12 @@ function processProgressRecord(
 			}
 		}
 		if (hasNonExemptSubTool) {
-			startPermissionTimer(agentId, agents, permissionTimers, PERMISSION_EXEMPT_TOOLS, webview);
+			startPermissionTimer(agentId, PERMISSION_EXEMPT_TOOLS, ctx);
 		}
 	} else if (msgType === 'user') {
 		for (const block of content) {
 			if (block.type === 'tool_result' && block.tool_use_id) {
-				console.log(`[Pixel Agents] Agent ${agentId} subagent tool done: ${block.tool_use_id} (parent: ${parentToolId})`);
+				log.info(` Agent ${agentId} subagent tool done: ${block.tool_use_id} (parent: ${parentToolId})`);
 
 				// Remove from tracking
 				const subTools = agent.activeSubagentToolIds.get(parentToolId);
@@ -271,7 +268,7 @@ function processProgressRecord(
 
 				const toolId = block.tool_use_id;
 				setTimeout(() => {
-					webview?.postMessage({
+					ctx.webview?.postMessage({
 						type: 'subagentToolDone',
 						id: agentId,
 						parentToolId,
@@ -293,7 +290,7 @@ function processProgressRecord(
 			if (stillHasNonExempt) {break;}
 		}
 		if (stillHasNonExempt) {
-			startPermissionTimer(agentId, agents, permissionTimers, PERMISSION_EXEMPT_TOOLS, webview);
+			startPermissionTimer(agentId, PERMISSION_EXEMPT_TOOLS, ctx);
 		}
 	}
 }

@@ -1,13 +1,12 @@
-import type * as vscode from 'vscode';
-import type { AgentState } from './types.js';
+import type { AgentContext } from './types.js';
 import { PERMISSION_TIMER_DELAY_MS } from './constants.js';
+import { log } from './logger.js';
 
 export function clearAgentActivity(
-	agent: AgentState | undefined,
 	agentId: number,
-	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
+	ctx: AgentContext,
 ): void {
+	const agent = ctx.agents.get(agentId);
 	if (!agent) {return;}
 	agent.activeToolIds.clear();
 	agent.activeToolStatuses.clear();
@@ -16,67 +15,64 @@ export function clearAgentActivity(
 	agent.activeSubagentToolNames.clear();
 	agent.isWaiting = false;
 	agent.permissionSent = false;
-	cancelPermissionTimer(agentId, permissionTimers);
-	webview?.postMessage({ type: 'agentToolsClear', id: agentId });
-	webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
+	agent.turnState = 'idle';
+	cancelPermissionTimer(agentId, ctx);
+	ctx.webview?.postMessage({ type: 'agentToolsClear', id: agentId });
+	ctx.webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
 }
 
 export function cancelWaitingTimer(
 	agentId: number,
-	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+	ctx: AgentContext,
 ): void {
-	const timer = waitingTimers.get(agentId);
+	const timer = ctx.waitingTimers.get(agentId);
 	if (timer) {
 		clearTimeout(timer);
-		waitingTimers.delete(agentId);
+		ctx.waitingTimers.delete(agentId);
 	}
 }
 
 export function startWaitingTimer(
 	agentId: number,
 	delayMs: number,
-	agents: Map<number, AgentState>,
-	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
-	webview: vscode.Webview | undefined,
+	ctx: AgentContext,
 ): void {
-	cancelWaitingTimer(agentId, waitingTimers);
+	cancelWaitingTimer(agentId, ctx);
 	const timer = setTimeout(() => {
-		waitingTimers.delete(agentId);
-		const agent = agents.get(agentId);
+		ctx.waitingTimers.delete(agentId);
+		const agent = ctx.agents.get(agentId);
 		if (agent) {
 			agent.isWaiting = true;
 		}
-		webview?.postMessage({
+		ctx.webview?.postMessage({
 			type: 'agentStatus',
 			id: agentId,
 			status: 'waiting',
 		});
 	}, delayMs);
-	waitingTimers.set(agentId, timer);
+	ctx.waitingTimers.set(agentId, timer);
 }
 
 export function cancelPermissionTimer(
 	agentId: number,
-	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+	ctx: AgentContext,
 ): void {
-	const timer = permissionTimers.get(agentId);
+	const timer = ctx.permissionTimers.get(agentId);
 	if (timer) {
 		clearTimeout(timer);
-		permissionTimers.delete(agentId);
+		ctx.permissionTimers.delete(agentId);
 	}
 }
 
 export function startPermissionTimer(
 	agentId: number,
-	agents: Map<number, AgentState>,
-	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
 	permissionExemptTools: Set<string>,
-	webview: vscode.Webview | undefined,
+	ctx: AgentContext,
 ): void {
-	cancelPermissionTimer(agentId, permissionTimers);
+	cancelPermissionTimer(agentId, ctx);
 	const timer = setTimeout(() => {
-		permissionTimers.delete(agentId);
-		const agent = agents.get(agentId);
+		ctx.permissionTimers.delete(agentId);
+		const agent = ctx.agents.get(agentId);
 		if (!agent) {return;}
 
 		// Only flag if there are still active non-exempt tools (parent or sub-agent)
@@ -103,14 +99,14 @@ export function startPermissionTimer(
 
 		if (hasNonExempt) {
 			agent.permissionSent = true;
-			console.log(`[Pixel Agents] Agent ${agentId}: possible permission wait detected`);
-			webview?.postMessage({
+			log.info(`Agent ${agentId}: possible permission wait detected`);
+			ctx.webview?.postMessage({
 				type: 'agentToolPermission',
 				id: agentId,
 			});
 			// Also notify stuck sub-agents
 			for (const parentToolId of stuckSubagentParentToolIds) {
-				webview?.postMessage({
+				ctx.webview?.postMessage({
 					type: 'subagentToolPermission',
 					id: agentId,
 					parentToolId,
@@ -118,5 +114,5 @@ export function startPermissionTimer(
 			}
 		}
 	}, PERMISSION_TIMER_DELAY_MS);
-	permissionTimers.set(agentId, timer);
+	ctx.permissionTimers.set(agentId, timer);
 }
