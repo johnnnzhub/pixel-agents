@@ -13,6 +13,10 @@ export const PERMISSION_TIMER_DELAY_MS = 7000;
 export const TEXT_IDLE_DELAY_MS = 5000;
 export const ADOPT_RECENT_THRESHOLD_MS = 30_000;
 
+// ── Attached (headless) Agent Stale Detection ────────────────
+export const ATTACHED_STALE_CHECK_INTERVAL_MS = 30_000;   // Check stale every 30s
+export const ATTACHED_STALE_THRESHOLD_MS = 120_000;        // Remove after 2min idle
+
 // ── Display Truncation ──────────────────────────────────────
 export const BASH_COMMAND_DISPLAY_MAX_LENGTH = 30;
 export const TASK_DESCRIPTION_DISPLAY_MAX_LENGTH = 40;

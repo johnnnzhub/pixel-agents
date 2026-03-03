@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import type { AgentState, AgentContext } from './types.js';
 import { cancelWaitingTimer, cancelPermissionTimer, clearAgentActivity } from './timerManager.js';
 import { processTranscriptLine } from './transcriptParser.js';
+import { attachSession } from './agentManager.js';
 import { FILE_WATCHER_POLL_INTERVAL_MS, PROJECT_SCAN_INTERVAL_MS, ADOPT_RECENT_THRESHOLD_MS } from './constants.js';
 import { log } from './logger.js';
 
@@ -90,7 +91,7 @@ export function readNewLines(
 
 function isTerminalOwned(terminal: vscode.Terminal, agents: Map<number, AgentState>): boolean {
 	for (const agent of agents.values()) {
-		if (agent.terminalRef === terminal) {return true;}
+		if (agent.terminalRef && agent.terminalRef === terminal) {return true;}
 	}
 	return false;
 }
@@ -136,13 +137,14 @@ export function adoptExistingSessions(
 			ctx.knownJsonlFiles.add(file);
 			adoptTerminalForFile(unownedTerminals.shift()!, file, projectDir, ctx);
 		} else {
-			// No terminal available — defer for later
-			ctx.adoptableFiles.add(file);
+			// No terminal available — attach as headless agent if recent
+			try {
+				const stat = fs.statSync(file);
+				if ((now - stat.mtimeMs) < ADOPT_RECENT_THRESHOLD_MS) {
+					attachSession(file, projectDir, ctx);
+				}
+			} catch { /* file gone */ }
 		}
-	}
-
-	if (ctx.adoptableFiles.size > 0) {
-		log.info(` ${ctx.adoptableFiles.size} session(s) deferred — waiting for terminal focus`);
 	}
 }
 
@@ -190,6 +192,7 @@ function scanForNewJsonlFiles(
 			.map(f => path.join(projectDir, f));
 	} catch { log.debug('Scan dir not readable:', projectDir); return; }
 
+	const now = Date.now();
 	for (const file of files) {
 		if (!ctx.knownJsonlFiles.has(file)) {
 			ctx.knownJsonlFiles.add(file);
@@ -203,8 +206,13 @@ function scanForNewJsonlFiles(
 				if (activeTerminal && !isTerminalOwned(activeTerminal, ctx.agents)) {
 					adoptTerminalForFile(activeTerminal, file, projectDir, ctx);
 				} else {
-					// Can't adopt now — defer
-					ctx.adoptableFiles.add(file);
+					// No terminal available — attach as headless agent if recent
+					try {
+						const stat = fs.statSync(file);
+						if ((now - stat.mtimeMs) < ADOPT_RECENT_THRESHOLD_MS) {
+							attachSession(file, projectDir, ctx);
+						}
+					} catch { /* file gone */ }
 				}
 			}
 		}

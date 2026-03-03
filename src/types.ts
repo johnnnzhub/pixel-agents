@@ -13,7 +13,7 @@ export type AgentTurnState = typeof TURN_STATES[keyof typeof TURN_STATES];
 
 export interface AgentState {
 	id: number;
-	terminalRef: vscode.Terminal;
+	terminalRef: vscode.Terminal | null;
 	projectDir: string;
 	jsonlFile: string;
 	fileOffset: number;
@@ -30,15 +30,19 @@ export interface AgentState {
 	_reading?: boolean;
 	/** Workspace folder name (only set for multi-root workspaces) */
 	folderName?: string;
+	/** true if agent was auto-detected from external session (no terminal) */
+	isAttached?: boolean;
 }
 
 export interface PersistedAgent {
 	id: number;
-	terminalName: string;
+	terminalName: string | null;
 	jsonlFile: string;
 	projectDir: string;
 	/** Workspace folder name (only set for multi-root workspaces) */
 	folderName?: string;
+	/** true if agent was auto-detected from external session (no terminal) */
+	isAttached?: boolean;
 }
 
 export interface AgentContext {

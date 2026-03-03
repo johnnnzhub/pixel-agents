@@ -12,11 +12,17 @@ export const WALK_SPEED_PX_PER_SEC = 48
 export const WALK_FRAME_DURATION_SEC = 0.15
 export const TYPE_FRAME_DURATION_SEC = 0.3
 export const WANDER_PAUSE_MIN_SEC = 2.0
-export const WANDER_PAUSE_MAX_SEC = 20.0
-export const WANDER_MOVES_BEFORE_REST_MIN = 3
-export const WANDER_MOVES_BEFORE_REST_MAX = 6
+export const WANDER_PAUSE_MAX_SEC = 6.0
+export const WANDER_MOVES_BEFORE_REST_MIN = 5
+export const WANDER_MOVES_BEFORE_REST_MAX = 10
 export const SEAT_REST_MIN_SEC = 120.0
 export const SEAT_REST_MAX_SEC = 240.0
+
+// ── POI & Interaction ────────────────────────────────────────
+export const IDLE_ANIM_FRAME_DURATION_SEC = 0.8
+export const INTERACT_MIN_SEC = 3.0
+export const INTERACT_MAX_SEC = 5.0
+export const WANDER_POI_CHANCE = 0.6
 
 // ── Matrix Effect ────────────────────────────────────────────
 export const MATRIX_EFFECT_DURATION_SEC = 0.3
@@ -95,6 +101,23 @@ export const NOTIFICATION_NOTE_1_START_SEC = 0
 export const NOTIFICATION_NOTE_2_START_SEC = 0.1
 export const NOTIFICATION_NOTE_DURATION_SEC = 0.18
 export const NOTIFICATION_VOLUME = 0.14
+
+// ── Social & Idle Interactivity ──────────────────────────────
+export const SOCIAL_CHANCE = 0.25
+export const SOCIAL_RANGE_TILES = 3
+export const SOCIAL_MIN_SEC = 4.0
+export const SOCIAL_MAX_SEC = 8.0
+export const SOCIAL_BUBBLE_TOGGLE_SEC = 1.5
+export const THOUGHT_BUBBLE_MIN_SEC = 15.0
+export const THOUGHT_BUBBLE_MAX_SEC = 30.0
+export const THOUGHT_BUBBLE_DURATION_MIN = 3.0
+export const THOUGHT_BUBBLE_DURATION_MAX = 5.0
+export const THOUGHT_BUBBLE_CHANCE = 0.3
+export const MOUSE_AWARENESS_RANGE_PX = 48
+export const MOUSE_LOOK_UPDATE_SEC = 0.5
+export const CLICK_REACTION_DURATION_SEC = 0.4
+export const IDLE_LOOK_AROUND_MIN_SEC = 8.0
+export const IDLE_LOOK_AROUND_MAX_SEC = 15.0
 
 // ── Game Logic ───────────────────────────────────────────────
 export const MAX_DELTA_TIME_SEC = 0.1

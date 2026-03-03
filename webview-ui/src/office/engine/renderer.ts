@@ -1,7 +1,7 @@
 import { TileType, TILE_SIZE, CharacterState } from '../types.js'
 import type { TileType as TileTypeVal, FurnitureInstance, Character, SpriteData, Seat, FloorColor } from '../types.js'
 import { getCachedSprite, getOutlineSprite } from '../sprites/spriteCache.js'
-import { getCharacterSprites, BUBBLE_PERMISSION_SPRITE, BUBBLE_WAITING_SPRITE } from '../sprites/spriteData.js'
+import { getCharacterSprites, BUBBLE_PERMISSION_SPRITE, BUBBLE_WAITING_SPRITE, BUBBLE_CHAT_SPRITE, THOUGHT_SPRITES } from '../sprites/spriteData.js'
 import { getCharacterSprite } from './characters.js'
 import { renderMatrixEffect } from './matrixEffect.js'
 import { getColorizedFloorSprite, hasFloorSprites, WALL_COLOR } from '../floorTiles.js'
@@ -38,6 +38,7 @@ import {
   SELECTION_HIGHLIGHT_COLOR,
   DELETE_BUTTON_BG,
   ROTATE_BUTTON_BG,
+  CLICK_REACTION_DURATION_SEC,
 } from '../../constants.js'
 
 // ── Render functions ────────────────────────────────────────────
@@ -126,9 +127,13 @@ export function renderScene(
     const cached = getCachedSprite(spriteData, zoom)
     // Sitting offset: shift character down when seated so they visually sit in the chair
     const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0
+    // Click bounce: small upward hop
+    const bounceY = ch.clickReactionTimer > 0
+      ? Math.sin((ch.clickReactionTimer / CLICK_REACTION_DURATION_SEC) * Math.PI) * -3 * zoom
+      : 0
     // Anchor at bottom-center of character — round to integer device pixels
     const drawX = Math.round(offsetX + ch.x * zoom - cached.width / 2)
-    const drawY = Math.round(offsetY + (ch.y + sittingOffset) * zoom - cached.height)
+    const drawY = Math.round(offsetY + (ch.y + sittingOffset) * zoom - cached.height + bounceY)
 
     // Sort characters by bottom of their tile (not center) so they render
     // in front of same-row furniture (e.g. chairs) but behind furniture
@@ -457,13 +462,32 @@ export function renderBubbles(
   for (const ch of characters) {
     if (!ch.bubbleType) continue
 
-    const sprite = ch.bubbleType === 'permission'
-      ? BUBBLE_PERMISSION_SPRITE
-      : BUBBLE_WAITING_SPRITE
+    let sprite
+    switch (ch.bubbleType) {
+      case 'permission':
+        sprite = BUBBLE_PERMISSION_SPRITE
+        break
+      case 'waiting':
+        sprite = BUBBLE_WAITING_SPRITE
+        break
+      case 'chat':
+        sprite = BUBBLE_CHAT_SPRITE
+        break
+      case 'thought':
+        sprite = (ch.thoughtIcon !== null && ch.thoughtIcon >= 0 && ch.thoughtIcon < THOUGHT_SPRITES.length)
+          ? THOUGHT_SPRITES[ch.thoughtIcon]
+          : BUBBLE_WAITING_SPRITE
+        break
+      default:
+        continue
+    }
 
-    // Compute opacity: permission = full, waiting = fade in last 0.5s
+    // Compute opacity: permission = full, waiting/thought = fade in last 0.5s
     let alpha = 1.0
     if (ch.bubbleType === 'waiting' && ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC) {
+      alpha = ch.bubbleTimer / BUBBLE_FADE_DURATION_SEC
+    }
+    if (ch.bubbleType === 'thought' && ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC) {
       alpha = ch.bubbleTimer / BUBBLE_FADE_DURATION_SEC
     }
 
@@ -472,8 +496,12 @@ export function renderBubbles(
     // Character is anchored bottom-center at (ch.x, ch.y), sprite is 16x24
     // Place bubble above head with a small gap; follow sitting offset
     const sittingOff = ch.state === CharacterState.TYPE ? BUBBLE_SITTING_OFFSET_PX : 0
+    // Click bounce: apply to bubble too
+    const bounceY = ch.clickReactionTimer > 0
+      ? Math.sin((ch.clickReactionTimer / CLICK_REACTION_DURATION_SEC) * Math.PI) * -3 * zoom
+      : 0
     const bubbleX = Math.round(offsetX + ch.x * zoom - cached.width / 2)
-    const bubbleY = Math.round(offsetY + (ch.y + sittingOff - BUBBLE_VERTICAL_OFFSET_PX) * zoom - cached.height - 1 * zoom)
+    const bubbleY = Math.round(offsetY + (ch.y + sittingOff - BUBBLE_VERTICAL_OFFSET_PX) * zoom - cached.height - 1 * zoom + bounceY)
 
     ctx.save()
     if (alpha < 1.0) ctx.globalAlpha = alpha

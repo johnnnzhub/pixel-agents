@@ -318,6 +318,145 @@ export const BUBBLE_WAITING_SPRITE: SpriteData = (() => {
   ]
 })()
 
+/** Chat bubble: white square with "..." in blue, and a tail pointer (11x13) */
+export const BUBBLE_CHAT_SPRITE: SpriteData = (() => {
+  const B = '#555566' // border
+  const F = '#EEEEFF' // fill
+  const C = '#5599DD' // blue dots
+  return [
+    [B, B, B, B, B, B, B, B, B, B, B],
+    [B, F, F, F, F, F, F, F, F, F, B],
+    [B, F, F, F, F, F, F, F, F, F, B],
+    [B, F, F, F, F, F, F, F, F, F, B],
+    [B, F, F, F, F, F, F, F, F, F, B],
+    [B, F, F, C, F, C, F, C, F, F, B],
+    [B, F, F, F, F, F, F, F, F, F, B],
+    [B, F, F, F, F, F, F, F, F, F, B],
+    [B, F, F, F, F, F, F, F, F, F, B],
+    [B, B, B, B, B, B, B, B, B, B, B],
+    [_, _, _, _, B, B, B, _, _, _, _],
+    [_, _, _, _, _, B, _, _, _, _, _],
+    [_, _, _, _, _, _, _, _, _, _, _],
+  ]
+})()
+
+/** Thought bubble: cloud shape with icon (11x13) */
+const THOUGHT_BORDER = '#888899'
+const THOUGHT_FILL = '#EEEEFF'
+const TB = THOUGHT_BORDER
+const TF = THOUGHT_FILL
+
+/** Coffee cup thought */
+export const THOUGHT_COFFEE_SPRITE: SpriteData = (() => {
+  const C = '#8B6914' // coffee brown
+  const W = '#DDDDEE' // cup white
+  return [
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, C, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, W, W, W, TF, TF, TF, TB],
+    [TB, TF, TF, TF, W, C, W, W, TF, TF, TB],
+    [TB, TF, TF, TF, W, C, W, TF, TF, TF, TB],
+    [TB, TF, TF, TF, W, W, W, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [_, _, _, _, _, _, _, TB, TB, _, _],
+    [_, _, _, _, _, _, _, _, TB, _, _],
+    [_, _, _, _, _, _, _, _, _, _, _],
+  ]
+})()
+
+/** Zzz thought */
+export const THOUGHT_ZZZ_SPRITE: SpriteData = (() => {
+  const Z = '#7777AA' // sleepy blue
+  return [
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, Z, Z, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, Z, TF, TF, TB],
+    [TB, TF, TF, TF, TF, Z, Z, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, Z, TF, TF, TF, TB],
+    [TB, TF, TF, TF, Z, Z, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [_, _, _, _, _, _, _, TB, TB, _, _],
+    [_, _, _, _, _, _, _, _, TB, _, _],
+    [_, _, _, _, _, _, _, _, _, _, _],
+  ]
+})()
+
+/** Code </> thought */
+export const THOUGHT_CODE_SPRITE: SpriteData = (() => {
+  const G = '#44BB66' // code green
+  return [
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, G, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, G, TF, TF, G, TF, TF, TF, TB],
+    [TB, TF, TF, G, TF, TF, G, TF, TF, TF, TB],
+    [TB, TF, TF, TF, G, TF, TF, G, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [_, _, _, _, _, _, _, TB, TB, _, _],
+    [_, _, _, _, _, _, _, _, TB, _, _],
+    [_, _, _, _, _, _, _, _, _, _, _],
+  ]
+})()
+
+/** Music note thought */
+export const THOUGHT_MUSIC_SPRITE: SpriteData = (() => {
+  const M = '#CC55AA' // music pink
+  return [
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, M, M, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, M, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, M, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, M, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, M, M, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [_, _, _, _, _, _, _, TB, TB, _, _],
+    [_, _, _, _, _, _, _, _, TB, _, _],
+    [_, _, _, _, _, _, _, _, _, _, _],
+  ]
+})()
+
+/** Lightbulb idea thought */
+export const THOUGHT_IDEA_SPRITE: SpriteData = (() => {
+  const Y = '#DDAA22' // yellow bulb
+  const W = '#EEDD88' // light
+  return [
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, W, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, Y, Y, Y, TF, TF, TF, TB],
+    [TB, TF, TF, TF, Y, W, Y, TF, TF, TF, TB],
+    [TB, TF, TF, TF, Y, Y, Y, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, Y, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, Y, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [_, _, _, _, _, _, _, TB, TB, _, _],
+    [_, _, _, _, _, _, _, _, TB, _, _],
+    [_, _, _, _, _, _, _, _, _, _, _],
+  ]
+})()
+
+/** Array of all thought sprites for random selection */
+export const THOUGHT_SPRITES: SpriteData[] = [
+  THOUGHT_COFFEE_SPRITE,
+  THOUGHT_ZZZ_SPRITE,
+  THOUGHT_CODE_SPRITE,
+  THOUGHT_MUSIC_SPRITE,
+  THOUGHT_IDEA_SPRITE,
+]
+
 // ── Character Sprites ───────────────────────────────────────────
 // 16x24 characters with palette substitution
 

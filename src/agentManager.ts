@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import type { AgentState, AgentContext, PersistedAgent } from './types.js';
 import { cancelWaitingTimer, cancelPermissionTimer } from './timerManager.js';
 import { startFileWatching, stopFileWatching, readNewLines, ensureProjectScan } from './fileWatcher.js';
-import { JSONL_POLL_INTERVAL_MS, TERMINAL_NAME_PREFIX, WORKSPACE_KEY_AGENTS, WORKSPACE_KEY_AGENT_SEATS } from './constants.js';
+import { JSONL_POLL_INTERVAL_MS, TERMINAL_NAME_PREFIX, WORKSPACE_KEY_AGENTS, WORKSPACE_KEY_AGENT_SEATS, ATTACHED_STALE_CHECK_INTERVAL_MS, ATTACHED_STALE_THRESHOLD_MS } from './constants.js';
 import { migrateAndLoadLayout } from './layoutPersistence.js';
 import { log } from './logger.js';
 
@@ -114,6 +114,62 @@ export function removeAgent(
 	ctx.persistAgents();
 }
 
+export function attachSession(
+	jsonlFile: string,
+	projectDir: string,
+	ctx: AgentContext,
+): void {
+	const id = ctx.nextAgentIdRef.current++;
+	const agent: AgentState = {
+		id,
+		terminalRef: null,
+		projectDir,
+		jsonlFile,
+		fileOffset: 0,
+		lineBuffer: '',
+		activeToolIds: new Set(),
+		activeToolStatuses: new Map(),
+		activeToolNames: new Map(),
+		activeSubagentToolIds: new Map(),
+		activeSubagentToolNames: new Map(),
+		isWaiting: false,
+		permissionSent: false,
+		turnState: 'idle',
+		isAttached: true,
+	};
+
+	ctx.agents.set(id, agent);
+	ctx.persistAgents();
+
+	log.info(`Agent ${id}: attached external session ${path.basename(jsonlFile)}`);
+	ctx.webview?.postMessage({ type: 'agentCreated', id, isAttached: true });
+
+	startFileWatching(id, jsonlFile, ctx);
+	readNewLines(id, ctx);
+}
+
+export function startAttachedStaleCheck(ctx: AgentContext): ReturnType<typeof setInterval> {
+	return setInterval(() => {
+		const now = Date.now();
+		for (const [id, agent] of ctx.agents) {
+			if (!agent.isAttached) {continue;}
+			try {
+				const stat = fs.statSync(agent.jsonlFile);
+				if ((now - stat.mtimeMs) > ATTACHED_STALE_THRESHOLD_MS) {
+					log.info(`Agent ${id}: attached session stale (no writes for ${Math.round((now - stat.mtimeMs) / 1000)}s), removing`);
+					removeAgent(id, ctx);
+					ctx.webview?.postMessage({ type: 'agentClosed', id });
+				}
+			} catch {
+				// File gone — remove agent
+				log.info(`Agent ${id}: attached JSONL file gone, removing`);
+				removeAgent(id, ctx);
+				ctx.webview?.postMessage({ type: 'agentClosed', id });
+			}
+		}
+	}, ATTACHED_STALE_CHECK_INTERVAL_MS);
+}
+
 export function persistAgents(
 	agents: Map<number, AgentState>,
 	context: vscode.ExtensionContext,
@@ -122,10 +178,11 @@ export function persistAgents(
 	for (const agent of agents.values()) {
 		persisted.push({
 			id: agent.id,
-			terminalName: agent.terminalRef.name,
+			terminalName: agent.terminalRef?.name ?? null,
 			jsonlFile: agent.jsonlFile,
 			projectDir: agent.projectDir,
 			folderName: agent.folderName,
+			isAttached: agent.isAttached,
 		});
 	}
 	context.workspaceState.update(WORKSPACE_KEY_AGENTS, persisted);
@@ -145,8 +202,15 @@ export function restoreAgents(
 	let restoredProjectDir: string | null = null;
 
 	for (const p of persisted) {
-		const terminal = liveTerminals.find(t => t.name === p.terminalName);
-		if (!terminal) {continue;}
+		let terminal: vscode.Terminal | null = null;
+
+		if (p.isAttached) {
+			// Attached agents don't need a terminal — just check JSONL exists
+			if (!fs.existsSync(p.jsonlFile)) {continue;}
+		} else {
+			terminal = liveTerminals.find(t => t.name === p.terminalName) ?? null;
+			if (!terminal) {continue;}
+		}
 
 		const agent: AgentState = {
 			id: p.id,
@@ -164,18 +228,21 @@ export function restoreAgents(
 			permissionSent: false,
 			turnState: 'idle',
 			folderName: p.folderName,
+			isAttached: p.isAttached,
 		};
 
 		ctx.agents.set(p.id, agent);
 		ctx.knownJsonlFiles.add(p.jsonlFile);
-		log.info(` Restored agent ${p.id} → terminal "${p.terminalName}"`);
+		log.info(` Restored agent ${p.id} → ${p.isAttached ? 'attached (external)' : `terminal "${p.terminalName}"`}`);
 
 		if (p.id > maxId) {maxId = p.id;}
 		// Extract terminal index from name like "Claude Code #3"
-		const match = p.terminalName.match(/#(\d+)$/);
-		if (match) {
-			const idx = parseInt(match[1], 10);
-			if (idx > maxIdx) {maxIdx = idx;}
+		if (p.terminalName) {
+			const match = p.terminalName.match(/#(\d+)$/);
+			if (match) {
+				const idx = parseInt(match[1], 10);
+				if (idx > maxIdx) {maxIdx = idx;}
+			}
 		}
 
 		restoredProjectDir = p.projectDir;
@@ -237,11 +304,15 @@ export function sendExistingAgents(
 	// Include persisted palette/seatId from separate key
 	const agentMeta = context.workspaceState.get<Record<string, { palette?: number; seatId?: string }>>(WORKSPACE_KEY_AGENT_SEATS, {});
 
-	// Include folderName per agent
+	// Include folderName and isAttached per agent
 	const folderNames: Record<number, string> = {};
+	const attachedIds: number[] = [];
 	for (const [id, agent] of agents) {
 		if (agent.folderName) {
 			folderNames[id] = agent.folderName;
+		}
+		if (agent.isAttached) {
+			attachedIds.push(id);
 		}
 	}
 	log.info(` sendExistingAgents: agents=${JSON.stringify(agentIds)}, meta=${JSON.stringify(agentMeta)}`);
@@ -251,6 +322,7 @@ export function sendExistingAgents(
 		agents: agentIds,
 		agentMeta,
 		folderNames,
+		attachedIds,
 	});
 
 	sendCurrentAgentStatuses(agents, webview);

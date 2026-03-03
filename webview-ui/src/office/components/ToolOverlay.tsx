@@ -8,6 +8,7 @@ import { TOOL_OVERLAY_VERTICAL_OFFSET, CHARACTER_SITTING_OFFSET_PX } from '../..
 interface ToolOverlayProps {
   officeState: OfficeState
   agents: number[]
+  attachedAgents: Set<number>
   agentTools: Record<number, ToolActivity[]>
   subagentCharacters: SubagentCharacter[]
   containerRef: React.RefObject<HTMLDivElement | null>
@@ -43,6 +44,7 @@ function getActivityText(
 export function ToolOverlay({
   officeState,
   agents,
+  attachedAgents,
   agentTools,
   subagentCharacters,
   containerRef,
@@ -194,7 +196,7 @@ export function ToolOverlay({
                   </span>
                 )}
               </div>
-              {isSelected && !isSub && (
+              {isSelected && !isSub && !attachedAgents.has(id) && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation()

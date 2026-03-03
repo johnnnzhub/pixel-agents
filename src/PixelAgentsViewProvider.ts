@@ -11,6 +11,7 @@ import {
 	sendExistingAgents,
 	sendLayout,
 	getProjectDirPath,
+	startAttachedStaleCheck,
 } from './agentManager.js';
 import { ensureProjectScan, adoptExistingSessions, adoptTerminalForFile } from './fileWatcher.js';
 import { loadFurnitureAssets, sendAssetsToWebview, loadFloorTiles, sendFloorTilesToWebview, loadWallTiles, sendWallTilesToWebview, loadCharacterSprites, sendCharacterSpritesToWebview, loadDefaultLayout } from './assetLoader.js';
@@ -28,6 +29,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 
 	// Cross-window layout sync
 	private layoutWatcher: LayoutWatcher | null = null;
+
+	// Stale attached agent cleanup timer
+	private attachedStaleTimer: ReturnType<typeof setInterval> | null = null;
 
 	// Unified agent context — passed to all helper functions
 	private ctx: AgentContext = {
@@ -67,13 +71,19 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 				);
 			} else if (message.type === 'focusAgent') {
 				const agent = this.ctx.agents.get(message.id);
-				if (agent) {
+				if (agent?.terminalRef) {
 					agent.terminalRef.show();
 				}
 			} else if (message.type === 'closeAgent') {
 				const agent = this.ctx.agents.get(message.id);
 				if (agent) {
-					agent.terminalRef.dispose();
+					if (agent.isAttached) {
+						// Attached agents have no terminal — just remove
+						removeAgent(message.id as number, this.ctx);
+						webviewView.webview.postMessage({ type: 'agentClosed', id: message.id });
+					} else if (agent.terminalRef) {
+						agent.terminalRef.dispose();
+					}
 				}
 			} else if (message.type === 'saveAgentSeats') {
 				// Store seat assignments in a separate key (never touched by persistAgents)
@@ -107,6 +117,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 				if (projectDir) {
 					adoptExistingSessions(projectDir, this.ctx);
 					ensureProjectScan(projectDir, this.ctx);
+
+					// Start stale check for attached (headless) agents
+					if (!this.attachedStaleTimer) {
+						this.attachedStaleTimer = startAttachedStaleCheck(this.ctx);
+					}
 
 					// Load furniture assets BEFORE sending layout
 					(async () => {
@@ -253,7 +268,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 			this.ctx.activeAgentIdRef.current = null;
 			if (!terminal) {return;}
 			for (const [id, agent] of this.ctx.agents) {
-				if (agent.terminalRef === terminal) {
+				if (agent.terminalRef && agent.terminalRef === terminal) {
 					this.ctx.activeAgentIdRef.current = id;
 					webviewView.webview.postMessage({ type: 'agentSelected', id });
 					break;
@@ -281,7 +296,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 			closeDebounceTimer = setTimeout(() => {
 				closeDebounceTimer = null;
 				for (const [id, agent] of this.ctx.agents) {
-					if (agent.terminalRef === closed) {
+					if (agent.terminalRef && agent.terminalRef === closed) {
 						if (this.ctx.activeAgentIdRef.current === id) {
 							this.ctx.activeAgentIdRef.current = null;
 						}
@@ -322,6 +337,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 	dispose() {
 		this.layoutWatcher?.dispose();
 		this.layoutWatcher = null;
+		if (this.attachedStaleTimer) {
+			clearInterval(this.attachedStaleTimer);
+			this.attachedStaleTimer = null;
+		}
 		for (const id of [...this.ctx.agents.keys()]) {
 			removeAgent(id, this.ctx);
 		}

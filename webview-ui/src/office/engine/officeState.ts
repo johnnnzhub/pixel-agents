@@ -13,8 +13,31 @@ import {
   CHARACTER_HIT_HALF_WIDTH,
   CHARACTER_HIT_HEIGHT,
 } from '../../constants.js'
-import type { Character, Seat, FurnitureInstance, TileType as TileTypeVal, OfficeLayout, PlacedFurniture } from '../types.js'
-import { createCharacter, updateCharacter } from './characters.js'
+
+export interface POI {
+  col: number
+  row: number
+  facingDir: Direction
+  interactType: 'read' | 'operate' | 'look'
+}
+import type { Character, Seat, FurnitureInstance, TileType as TileTypeVal, OfficeLayout, PlacedFurniture, AgentPersonality } from '../types.js'
+import { createCharacter, updateCharacter, DEFAULT_PERSONALITY } from './characters.js'
+
+/** Personality presets: one per palette (0-5) */
+const PERSONALITY_PRESETS: AgentPersonality[] = [
+  // Palette 0: balanced
+  { wanderFrequency: 1.0, socialChance: 0.3, thoughtFrequency: 1.0, preferredPOIs: [] },
+  // Palette 1: social butterfly
+  { wanderFrequency: 1.3, socialChance: 0.5, thoughtFrequency: 0.8, preferredPOIs: ['look'] },
+  // Palette 2: quiet thinker
+  { wanderFrequency: 0.6, socialChance: 0.1, thoughtFrequency: 1.5, preferredPOIs: ['read'] },
+  // Palette 3: hyperactive
+  { wanderFrequency: 1.5, socialChance: 0.4, thoughtFrequency: 0.5, preferredPOIs: ['operate'] },
+  // Palette 4: bookworm
+  { wanderFrequency: 0.8, socialChance: 0.2, thoughtFrequency: 1.2, preferredPOIs: ['read'] },
+  // Palette 5: observer
+  { wanderFrequency: 1.1, socialChance: 0.35, thoughtFrequency: 1.0, preferredPOIs: ['look'] },
+]
 import { matrixEffectSeeds } from './matrixEffect.js'
 import { isWalkable, getWalkableTiles, findPath } from '../layout/tileMap.js'
 import {
@@ -42,6 +65,10 @@ export class OfficeState {
   subagentIdMap: Map<string, number> = new Map()
   /** Reverse lookup: sub-agent character ID → parent info */
   subagentMeta: Map<number, { parentAgentId: number; parentToolId: string }> = new Map()
+  poiList: POI[] = []
+  /** Mouse position in world (sprite pixel) coords, or null if off-canvas */
+  mouseWorldX: number | null = null
+  mouseWorldY: number | null = null
   private nextSubagentId = -1
 
   constructor(layout?: OfficeLayout) {
@@ -51,6 +78,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(this.layout.furniture)
     this.furniture = layoutToFurnitureInstances(this.layout.furniture)
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles)
+    this.rebuildPOIs()
   }
 
   /** Rebuild all derived state from a new layout. Reassigns existing characters.
@@ -62,6 +90,7 @@ export class OfficeState {
     this.blockedTiles = getBlockedTiles(layout.furniture)
     this.rebuildFurnitureInstances()
     this.walkableTiles = getWalkableTiles(this.tileMap, this.blockedTiles)
+    this.rebuildPOIs()
 
     // Shift character positions when grid expands left/up
     if (shift && (shift.col !== 0 || shift.row !== 0)) {
@@ -136,6 +165,61 @@ export class OfficeState {
     ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2
     ch.path = []
     ch.moveProgress = 0
+  }
+
+  /** Scan furniture and build list of interesting POIs for character wandering */
+  private rebuildPOIs(): void {
+    this.poiList = []
+    const dirs: Array<{ dc: number; dr: number; facing: Direction }> = [
+      { dc: 0, dr: -1, facing: Direction.UP },    // tile above → face up
+      { dc: 0, dr: 1, facing: Direction.DOWN },   // tile below → face down
+      { dc: -1, dr: 0, facing: Direction.LEFT },   // tile left → face left
+      { dc: 1, dr: 0, facing: Direction.RIGHT },   // tile right → face right
+    ]
+
+    for (const item of this.layout.furniture) {
+      const entry = getCatalogEntry(item.type)
+      if (!entry) continue
+      if (entry.isDesk) continue
+      if (entry.category === 'chairs') continue
+      if (entry.canPlaceOnWalls) continue
+
+      let interactType: 'read' | 'operate' | 'look'
+      switch (entry.category) {
+        case 'storage': interactType = 'read'; break
+        case 'electronics':
+        case 'misc': interactType = 'operate'; break
+        default: interactType = 'look'; break
+      }
+
+      // Find walkable tiles adjacent to the furniture footprint
+      for (let dr = 0; dr < entry.footprintH; dr++) {
+        for (let dc = 0; dc < entry.footprintW; dc++) {
+          const fCol = item.col + dc
+          const fRow = item.row + dr
+          for (const d of dirs) {
+            const adjCol = fCol + d.dc
+            const adjRow = fRow + d.dr
+            // Must be within bounds and walkable
+            if (adjRow < 0 || adjRow >= this.tileMap.length) continue
+            if (adjCol < 0 || adjCol >= (this.tileMap[0]?.length ?? 0)) continue
+            if (this.blockedTiles.has(`${adjCol},${adjRow}`)) continue
+            // Check if the adjacent tile is in walkableTiles
+            const isWalk = this.walkableTiles.some(t => t.col === adjCol && t.row === adjRow)
+            if (!isWalk) continue
+            // Face toward the furniture (opposite of the direction we walked)
+            const facingDir = d.dc === 1 ? Direction.LEFT
+              : d.dc === -1 ? Direction.RIGHT
+              : d.dr === 1 ? Direction.UP
+              : Direction.DOWN
+            // Avoid duplicates at the same tile
+            if (!this.poiList.some(p => p.col === adjCol && p.row === adjRow)) {
+              this.poiList.push({ col: adjCol, row: adjRow, facingDir, interactType })
+            }
+          }
+        }
+      }
+    }
   }
 
   getLayout(): OfficeLayout {
@@ -219,17 +303,19 @@ export class OfficeState {
       seatId = this.findFreeSeat()
     }
 
+    const personality = PERSONALITY_PRESETS[palette] ?? DEFAULT_PERSONALITY
+
     let ch: Character
     if (seatId) {
       const seat = this.seats.get(seatId)!
       seat.assigned = true
-      ch = createCharacter(id, palette, seatId, seat, hueShift)
+      ch = createCharacter(id, palette, seatId, seat, hueShift, personality)
     } else {
       // No seats — spawn at random walkable tile
       const spawn = this.walkableTiles.length > 0
         ? this.walkableTiles[Math.floor(Math.random() * this.walkableTiles.length)]
         : { col: 1, row: 1 }
-      ch = createCharacter(id, palette, null, null, hueShift)
+      ch = createCharacter(id, palette, null, null, hueShift, personality)
       ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2
       ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2
       ch.tileCol = spawn.col
@@ -349,11 +435,30 @@ export class OfficeState {
       findPath(ch.tileCol, ch.tileRow, col, row, this.tileMap, this.blockedTiles)
     )
     if (path.length === 0) return false
+    // Break social interaction if active
+    if (ch.state === CharacterState.SOCIAL && ch.socialPartnerId !== null) {
+      const partner = this.characters.get(ch.socialPartnerId)
+      if (partner && partner.state === CharacterState.SOCIAL) {
+        partner.bubbleType = null
+        partner.socialPartnerId = null
+        partner.socialRole = null
+        partner.socialTimer = 0
+        partner.state = CharacterState.IDLE
+        partner.frame = 0
+        partner.frameTimer = 0
+      }
+    }
     ch.path = path
     ch.moveProgress = 0
     ch.state = CharacterState.WALK
     ch.frame = 0
     ch.frameTimer = 0
+    ch.interactType = null
+    ch.interactTimer = 0
+    ch.socialPartnerId = null
+    ch.socialRole = null
+    ch.socialTimer = 0
+    ch.bubbleType = ch.bubbleType === 'permission' || ch.bubbleType === 'waiting' ? ch.bubbleType : null
     return true
   }
 
@@ -613,9 +718,15 @@ export class OfficeState {
     }
   }
 
+  setMouseWorldPosition(x: number | null, y: number | null): void {
+    this.mouseWorldX = x
+    this.mouseWorldY = y
+  }
+
   update(dt: number): void {
     const toDelete: number[] = []
-    for (const ch of this.characters.values()) {
+    const allCharacters = Array.from(this.characters.values())
+    for (const ch of allCharacters) {
       // Handle matrix effect animation
       if (ch.matrixEffect) {
         ch.matrixEffectTimer += dt
@@ -635,7 +746,7 @@ export class OfficeState {
 
       // Temporarily unblock own seat so character can pathfind to it
       this.withOwnSeatUnblocked(ch, () =>
-        updateCharacter(ch, dt, this.walkableTiles, this.seats, this.tileMap, this.blockedTiles)
+        updateCharacter(ch, dt, this.walkableTiles, this.seats, this.tileMap, this.blockedTiles, this.poiList, allCharacters, this.mouseWorldX, this.mouseWorldY)
       )
 
       // Tick bubble timer for waiting bubbles

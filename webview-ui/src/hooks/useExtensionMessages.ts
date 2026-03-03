@@ -42,6 +42,7 @@ export interface WorkspaceFolder {
 
 export interface ExtensionMessageState {
   agents: number[]
+  attachedAgents: Set<number>
   selectedAgent: number | null
   agentTools: Record<number, ToolActivity[]>
   agentStatuses: Record<number, string>
@@ -67,6 +68,7 @@ export function useExtensionMessages(
   isEditDirty?: () => boolean,
 ): ExtensionMessageState {
   const [agents, setAgents] = useState<number[]>([])
+  const [attachedAgents, setAttachedAgents] = useState<Set<number>>(new Set())
   const [selectedAgent, setSelectedAgent] = useState<number | null>(null)
   const [agentTools, setAgentTools] = useState<Record<number, ToolActivity[]>>({})
   const [agentStatuses, setAgentStatuses] = useState<Record<number, string>>({})
@@ -115,13 +117,19 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentCreated') {
         const id = msg.id as number
         const folderName = msg.folderName as string | undefined
+        const isAttached = msg.isAttached as boolean | undefined
         setAgents((prev) => (prev.includes(id) ? prev : [...prev, id]))
-        setSelectedAgent(id)
+        if (isAttached) {
+          setAttachedAgents((prev) => { const next = new Set(prev); next.add(id); return next })
+        } else {
+          setSelectedAgent(id)
+        }
         os.addAgent(id, undefined, undefined, undefined, undefined, folderName)
         saveAgentSeats(os)
       } else if (msg.type === 'agentClosed') {
         const id = msg.id as number
         setAgents((prev) => prev.filter((a) => a !== id))
+        setAttachedAgents((prev) => { const next = new Set(prev); next.delete(id); return next })
         setSelectedAgent((prev) => (prev === id ? null : prev))
         setAgentTools((prev) => {
           if (!(id in prev)) return prev
@@ -149,6 +157,14 @@ export function useExtensionMessages(
         const incoming = msg.agents as number[]
         const meta = (msg.agentMeta || {}) as Record<number, { palette?: number; hueShift?: number; seatId?: string }>
         const folderNames = (msg.folderNames || {}) as Record<number, string>
+        const incomingAttached = (msg.attachedIds || []) as number[]
+        if (incomingAttached.length > 0) {
+          setAttachedAgents((prev) => {
+            const next = new Set(prev)
+            for (const id of incomingAttached) next.add(id)
+            return next
+          })
+        }
         // Buffer agents — they'll be added in layoutLoaded after seats are built
         for (const id of incoming) {
           const m = meta[id]
@@ -360,5 +376,5 @@ export function useExtensionMessages(
     return () => window.removeEventListener('message', handler)
   }, [getOfficeState])
 
-  return { agents, selectedAgent, agentTools, agentStatuses, subagentTools, subagentCharacters, layoutReady, loadedAssets, workspaceFolders }
+  return { agents, attachedAgents, selectedAgent, agentTools, agentStatuses, subagentTools, subagentCharacters, layoutReady, loadedAssets, workspaceFolders }
 }

@@ -4,8 +4,8 @@ import type { EditorState } from '../editor/editorState.js'
 import type { EditorRenderState, SelectionRenderState, DeleteButtonBounds, RotateButtonBounds } from '../engine/renderer.js'
 import { startGameLoop } from '../engine/gameLoop.js'
 import { renderFrame } from '../engine/renderer.js'
-import { TILE_SIZE, EditTool } from '../types.js'
-import { CAMERA_FOLLOW_LERP, CAMERA_FOLLOW_SNAP_THRESHOLD, ZOOM_MIN, ZOOM_MAX, ZOOM_SCROLL_THRESHOLD, PAN_MARGIN_FRACTION } from '../../constants.js'
+import { TILE_SIZE, EditTool, CharacterState } from '../types.js'
+import { CAMERA_FOLLOW_LERP, CAMERA_FOLLOW_SNAP_THRESHOLD, ZOOM_MIN, ZOOM_MAX, ZOOM_SCROLL_THRESHOLD, PAN_MARGIN_FRACTION, CLICK_REACTION_DURATION_SEC } from '../../constants.js'
 import { getCatalogEntry, isRotatable } from '../layout/furnitureCatalog.js'
 import { canPlaceFurniture, getWallPlacementRow } from '../editor/editorActions.js'
 import { vscode } from '../../vscodeApi.js'
@@ -370,6 +370,8 @@ export function OfficeCanvas({ officeState, onClick, isEditMode, editorState, on
 
       const pos = screenToWorld(e.clientX, e.clientY)
       if (!pos) return
+      // Update mouse world position for character awareness
+      officeState.setMouseWorldPosition(pos.worldX, pos.worldY)
       const hitId = officeState.getCharacterAt(pos.worldX, pos.worldY)
       const tile = screenToTile(e.clientX, e.clientY)
       officeState.hoveredTile = tile
@@ -548,6 +550,11 @@ export function OfficeCanvas({ officeState, onClick, isEditMode, editorState, on
 
       const hitId = officeState.getCharacterAt(pos.worldX, pos.worldY)
       if (hitId !== null) {
+        // Click reaction bounce on idle agents
+        const hitCh = officeState.characters.get(hitId)
+        if (hitCh && !hitCh.isActive && hitCh.state !== CharacterState.TYPE) {
+          hitCh.clickReactionTimer = CLICK_REACTION_DURATION_SEC
+        }
         // Dismiss any active bubble on click
         officeState.dismissBubble(hitId)
         // Toggle selection: click same agent deselects, different agent selects
@@ -615,6 +622,7 @@ export function OfficeCanvas({ officeState, onClick, isEditMode, editorState, on
     editorState.ghostRow = -1
     officeState.hoveredAgentId = null
     officeState.hoveredTile = null
+    officeState.setMouseWorldPosition(null, null)
   }, [officeState, editorState])
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {

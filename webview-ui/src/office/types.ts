@@ -38,6 +38,8 @@ export const CharacterState = {
   IDLE: 'idle',
   WALK: 'walk',
   TYPE: 'type',
+  INTERACT: 'interact',
+  SOCIAL: 'social',
 } as const
 export type CharacterState = (typeof CharacterState)[keyof typeof CharacterState]
 
@@ -142,6 +144,17 @@ export interface OfficeLayout {
   tileColors?: Array<FloorColor | null>
 }
 
+export interface AgentPersonality {
+  /** Wander frequency multiplier: 0.5 (lazy) to 1.5 (restless) */
+  wanderFrequency: number
+  /** Chance to initiate social interaction: 0.1 (introvert) to 0.5 (extrovert) */
+  socialChance: number
+  /** Thought bubble frequency multiplier */
+  thoughtFrequency: number
+  /** Preferred POI interact types */
+  preferredPOIs: string[]
+}
+
 export interface Character {
   id: number
   state: CharacterState
@@ -178,7 +191,7 @@ export interface Character {
   /** Assigned seat uid, or null if no seat */
   seatId: string | null
   /** Active speech bubble type, or null if none showing */
-  bubbleType: 'permission' | 'waiting' | null
+  bubbleType: 'permission' | 'waiting' | 'chat' | 'thought' | null
   /** Countdown timer for bubble (waiting: 2→0, permission: unused) */
   bubbleTimer: number
   /** Timer to stay seated while inactive after seat reassignment (counts down to 0) */
@@ -195,4 +208,26 @@ export interface Character {
   matrixEffectSeeds: number[]
   /** Workspace folder name (only set for multi-root workspaces) */
   folderName?: string
+  /** Interaction animation type when in INTERACT state */
+  interactType: 'read' | 'operate' | 'look' | null
+  /** Countdown timer for interaction duration (3-5s) */
+  interactTimer: number
+  /** ID of social interaction partner, or null */
+  socialPartnerId: number | null
+  /** Countdown timer for social interaction */
+  socialTimer: number
+  /** Role in social interaction */
+  socialRole: 'initiator' | 'responder' | null
+  /** Countdown timer for thought bubble appearance */
+  thoughtTimer: number
+  /** Index of thought icon to show (0-4), or null */
+  thoughtIcon: number | null
+  /** Countdown timer for click reaction bounce */
+  clickReactionTimer: number
+  /** Timer for mouse-aware look direction */
+  lookTimer: number
+  /** Timer for idle look-around behavior */
+  idleLookTimer: number
+  /** Personality traits */
+  personality: AgentPersonality
 }
