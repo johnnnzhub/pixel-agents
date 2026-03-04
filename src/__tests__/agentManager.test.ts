@@ -18,7 +18,7 @@ describe('getProjectDirPath', () => {
 
 	it('converts simple path', () => {
 		const result = getProjectDirPath('/Users/john/my-project');
-		expect(result).toContain('.claude/projects/');
+		expect(result).toMatch(/\.claude[/\\]projects[/\\]/);
 		expect(result).toContain('-Users-john-my-project');
 	});
 
