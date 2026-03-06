@@ -1,5 +1,5 @@
-import type { AgentContext } from './types.js';
-import { PERMISSION_TIMER_DELAY_MS } from './constants.js';
+import type { AgentContext, AgentState } from './types.js';
+import { PERMISSION_TIMER_DELAY_MS, SUBAGENT_TOOL_STALE_MS } from './constants.js';
 import { log } from './logger.js';
 
 export function clearAgentActivity(
@@ -13,6 +13,7 @@ export function clearAgentActivity(
 	agent.activeToolNames.clear();
 	agent.activeSubagentToolIds.clear();
 	agent.activeSubagentToolNames.clear();
+	agent.activeSubagentToolTimestamps.clear();
 	agent.isWaiting = false;
 	agent.permissionSent = false;
 	agent.turnState = 'idle';
@@ -64,6 +65,52 @@ export function cancelPermissionTimer(
 	}
 }
 
+/**
+ * Remove sub-agent tool entries that have been active longer than SUBAGENT_TOOL_STALE_MS.
+ * Prevents zombie entries from accumulating when sub-agents crash without emitting tool_result.
+ */
+export function cleanupStaleSubagentTools(
+	agentId: number,
+	agent: AgentState,
+	ctx: AgentContext,
+): void {
+	const now = Date.now();
+	for (const [parentToolId, timestamps] of agent.activeSubagentToolTimestamps) {
+		const staleIds: string[] = [];
+		for (const [subToolId, startTime] of timestamps) {
+			if (now - startTime > SUBAGENT_TOOL_STALE_MS) {
+				staleIds.push(subToolId);
+			}
+		}
+		if (staleIds.length === 0) {continue;}
+
+		const subTools = agent.activeSubagentToolIds.get(parentToolId);
+		const subNames = agent.activeSubagentToolNames.get(parentToolId);
+		for (const subToolId of staleIds) {
+			log.info(`Agent ${agentId}: cleaning stale sub-agent tool ${subToolId} (parent: ${parentToolId})`);
+			subTools?.delete(subToolId);
+			subNames?.delete(subToolId);
+			timestamps.delete(subToolId);
+			ctx.webview?.postMessage({
+				type: 'subagentToolDone',
+				id: agentId,
+				parentToolId,
+				toolId: subToolId,
+			});
+		}
+		// Clean up empty parent entries
+		if (timestamps.size === 0) {
+			agent.activeSubagentToolTimestamps.delete(parentToolId);
+		}
+		if (subTools?.size === 0) {
+			agent.activeSubagentToolIds.delete(parentToolId);
+		}
+		if (subNames?.size === 0) {
+			agent.activeSubagentToolNames.delete(parentToolId);
+		}
+	}
+}
+
 export function startPermissionTimer(
 	agentId: number,
 	permissionExemptTools: Set<string>,
@@ -74,6 +121,9 @@ export function startPermissionTimer(
 		ctx.permissionTimers.delete(agentId);
 		const agent = ctx.agents.get(agentId);
 		if (!agent) {return;}
+
+		// Clean up stale sub-agent tools before checking permissions
+		cleanupStaleSubagentTools(agentId, agent, ctx);
 
 		// Only flag if there are still active non-exempt tools (parent or sub-agent)
 		let hasNonExempt = false;

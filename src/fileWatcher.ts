@@ -238,6 +238,7 @@ export function adoptTerminalForFile(
 		activeToolNames: new Map(),
 		activeSubagentToolIds: new Map(),
 		activeSubagentToolNames: new Map(),
+		activeSubagentToolTimestamps: new Map(),
 		isWaiting: false,
 		permissionSent: false,
 		turnState: 'idle',

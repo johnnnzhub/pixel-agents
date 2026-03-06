@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import type { AgentState, AgentContext } from './types.js';
+import type { AgentState, AgentContext, WebviewToExtensionMessage } from './types.js';
 import {
 	launchNewTerminal,
 	removeAgent,
@@ -16,7 +16,7 @@ import {
 import { ensureProjectScan, adoptExistingSessions, adoptTerminalForFile } from './fileWatcher.js';
 import { loadFurnitureAssets, sendAssetsToWebview, loadFloorTiles, sendFloorTilesToWebview, loadWallTiles, sendWallTilesToWebview, loadCharacterSprites, sendCharacterSpritesToWebview, loadDefaultLayout } from './assetLoader.js';
 import { WORKSPACE_KEY_AGENT_SEATS, GLOBAL_KEY_SOUND_ENABLED } from './constants.js';
-import { writeLayoutToFile, readLayoutFromFile, watchLayoutFile } from './layoutPersistence.js';
+import { writeLayoutToFile, readLayoutFromFile, watchLayoutFile, validateLayout } from './layoutPersistence.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { log } from './logger.js';
 
@@ -63,11 +63,12 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 		webviewView.webview.options = { enableScripts: true };
 		webviewView.webview.html = getWebviewContent(webviewView.webview, this.extensionUri);
 
-		webviewView.webview.onDidReceiveMessage(async (message) => {
+		webviewView.webview.onDidReceiveMessage(async (raw: unknown) => {
+			const message = raw as WebviewToExtensionMessage;
 			if (message.type === 'openClaude') {
 				await launchNewTerminal(
 					this.nextTerminalIndex, this.ctx,
-					message.folderPath as string | undefined,
+					message.folderPath,
 				);
 			} else if (message.type === 'focusAgent') {
 				const agent = this.ctx.agents.get(message.id);
@@ -79,7 +80,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 				if (agent) {
 					if (agent.isAttached) {
 						// Attached agents have no terminal — just remove
-						removeAgent(message.id as number, this.ctx);
+						removeAgent(message.id, this.ctx);
 						webviewView.webview.postMessage({ type: 'agentClosed', id: message.id });
 					} else if (agent.terminalRef) {
 						agent.terminalRef.dispose();
@@ -91,7 +92,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 				this.context.workspaceState.update(WORKSPACE_KEY_AGENT_SEATS, message.seats);
 			} else if (message.type === 'saveLayout') {
 				this.layoutWatcher?.markOwnWrite();
-				writeLayoutToFile(message.layout as Record<string, unknown>);
+				writeLayoutToFile(message.layout);
 			} else if (message.type === 'setSoundEnabled') {
 				this.context.globalState.update(GLOBAL_KEY_SOUND_ENABLED, message.enabled);
 			} else if (message.type === 'webviewReady') {
@@ -248,10 +249,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 				});
 				if (!uris || uris.length === 0) {return;}
 				try {
-					const raw = fs.readFileSync(uris[0].fsPath, 'utf-8');
-					const imported = JSON.parse(raw) as Record<string, unknown>;
-					if (imported.version !== 1 || !Array.isArray(imported.tiles)) {
-						vscode.window.showErrorMessage('Pixel Agents: Invalid layout file.');
+					const rawText = fs.readFileSync(uris[0].fsPath, 'utf-8');
+					const imported = JSON.parse(rawText) as Record<string, unknown>;
+					const validationError = validateLayout(imported);
+					if (validationError) {
+						vscode.window.showErrorMessage(`Pixel Agents: ${validationError}`);
 						return;
 					}
 					this.layoutWatcher?.markOwnWrite();

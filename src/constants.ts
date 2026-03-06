@@ -17,6 +17,9 @@ export const ADOPT_RECENT_THRESHOLD_MS = 30_000;
 export const ATTACHED_STALE_CHECK_INTERVAL_MS = 30_000;   // Check stale every 30s
 export const ATTACHED_STALE_THRESHOLD_MS = 120_000;        // Remove after 2min idle
 
+// ── Sub-agent Tool Stale Detection ─────────────────────────
+export const SUBAGENT_TOOL_STALE_MS = 300_000;              // Clean up after 5min idle
+
 // ── Display Truncation ──────────────────────────────────────
 export const BASH_COMMAND_DISPLAY_MAX_LENGTH = 30;
 export const TASK_DESCRIPTION_DISPLAY_MAX_LENGTH = 40;

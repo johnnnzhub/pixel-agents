@@ -1,6 +1,43 @@
 import type * as fs from 'fs';
 import type * as vscode from 'vscode';
 
+// ── Webview → Extension Messages ─────────────────────────────
+export type WebviewToExtensionMessage =
+	| { type: 'openClaude'; folderPath?: string }
+	| { type: 'focusAgent'; id: number }
+	| { type: 'closeAgent'; id: number }
+	| { type: 'saveAgentSeats'; seats: Record<number, { palette: number; hueShift: number; seatId: string | null }> }
+	| { type: 'saveLayout'; layout: Record<string, unknown> }
+	| { type: 'setSoundEnabled'; enabled: boolean }
+	| { type: 'webviewReady' }
+	| { type: 'openSessionsFolder' }
+	| { type: 'exportLayout' }
+	| { type: 'importLayout' };
+
+// ── Extension → Webview Messages ─────────────────────────────
+export type ExtensionToWebviewMessage =
+	| { type: 'agentCreated'; id: number; folderName?: string; isAttached?: boolean }
+	| { type: 'agentClosed'; id: number }
+	| { type: 'agentToolStart'; id: number; toolId: string; status: string }
+	| { type: 'agentToolDone'; id: number; toolId: string }
+	| { type: 'agentToolsClear'; id: number }
+	| { type: 'agentStatus'; id: number; status: string }
+	| { type: 'agentSelected'; id: number }
+	| { type: 'agentToolPermission'; id: number }
+	| { type: 'agentToolPermissionClear'; id: number }
+	| { type: 'subagentToolStart'; id: number; parentToolId: string; toolId: string; status: string }
+	| { type: 'subagentToolDone'; id: number; parentToolId: string; toolId: string }
+	| { type: 'subagentToolPermission'; id: number; parentToolId: string }
+	| { type: 'subagentClear'; id: number; parentToolId: string }
+	| { type: 'existingAgents'; agents: number[]; agentMeta?: Record<number, { palette?: number; hueShift?: number; seatId?: string }>; folderNames?: Record<number, string>; attachedIds?: number[] }
+	| { type: 'layoutLoaded'; layout: Record<string, unknown> | null }
+	| { type: 'furnitureAssetsLoaded'; catalog: unknown[]; sprites: Record<string, string[][]> }
+	| { type: 'floorTilesLoaded'; sprites: string[][][] }
+	| { type: 'wallTilesLoaded'; sprites: string[][][] }
+	| { type: 'characterSpritesLoaded'; characters: Array<{ down: string[][][]; up: string[][][]; right: string[][][] }> }
+	| { type: 'workspaceFolders'; folders: Array<{ name: string; path: string }> }
+	| { type: 'settingsLoaded'; soundEnabled: boolean };
+
 export const TURN_STATES = {
 	idle: 'idle',
 	thinking: 'thinking',
@@ -23,6 +60,7 @@ export interface AgentState {
 	activeToolNames: Map<string, string>;
 	activeSubagentToolIds: Map<string, Set<string>>; // parentToolId → active sub-tool IDs
 	activeSubagentToolNames: Map<string, Map<string, string>>; // parentToolId → (subToolId → toolName)
+	activeSubagentToolTimestamps: Map<string, Map<string, number>>; // parentToolId → (subToolId → startTime)
 	isWaiting: boolean;
 	permissionSent: boolean;
 	turnState: AgentTurnState;

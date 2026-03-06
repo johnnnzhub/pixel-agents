@@ -10,6 +10,34 @@ export interface LayoutWatcher {
 	dispose(): void;
 }
 
+/**
+ * Validates a layout object structure. Returns an error message string if invalid, or null if valid.
+ */
+export function validateLayout(layout: Record<string, unknown>): string | null {
+	if (layout.version !== 1) {
+		return 'Invalid layout file: unsupported version.';
+	}
+	if (!Array.isArray(layout.tiles)) {
+		return 'Invalid layout file: missing tiles array.';
+	}
+	if (typeof layout.cols !== 'number' || typeof layout.rows !== 'number') {
+		return 'Invalid layout file: missing cols/rows dimensions.';
+	}
+	if (layout.cols < 1 || layout.rows < 1 || layout.cols > 64 || layout.rows > 64) {
+		return `Invalid layout file: dimensions out of range (${layout.cols}x${layout.rows}).`;
+	}
+	if (layout.tiles.length !== layout.cols * layout.rows) {
+		return `Invalid layout file: tiles array length (${layout.tiles.length}) does not match dimensions (${layout.cols}x${layout.rows} = ${layout.cols * layout.rows}).`;
+	}
+	if (layout.furniture !== undefined && !Array.isArray(layout.furniture)) {
+		return 'Invalid layout file: furniture must be an array.';
+	}
+	if (layout.tileColors !== undefined && !Array.isArray(layout.tileColors)) {
+		return 'Invalid layout file: tileColors must be an array.';
+	}
+	return null;
+}
+
 function getLayoutFilePath(): string {
 	return path.join(os.homedir(), LAYOUT_FILE_DIR, LAYOUT_FILE_NAME);
 }

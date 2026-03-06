@@ -12,6 +12,7 @@ import {
 	TEXT_IDLE_DELAY_MS,
 	BASH_COMMAND_DISPLAY_MAX_LENGTH,
 	TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
+	SUBAGENT_TOOL_STALE_MS,
 } from './constants.js';
 import { log } from './logger.js';
 
@@ -112,6 +113,7 @@ export function processTranscriptLine(
 							if (agent.activeToolNames.get(completedToolId) === 'Task') {
 								agent.activeSubagentToolIds.delete(completedToolId);
 								agent.activeSubagentToolNames.delete(completedToolId);
+								agent.activeSubagentToolTimestamps.delete(completedToolId);
 								ctx.webview?.postMessage({
 									type: 'subagentClear',
 									id: agentId,
@@ -159,6 +161,7 @@ export function processTranscriptLine(
 				agent.activeToolNames.clear();
 				agent.activeSubagentToolIds.clear();
 				agent.activeSubagentToolNames.clear();
+				agent.activeSubagentToolTimestamps.clear();
 				ctx.webview?.postMessage({ type: 'agentToolsClear', id: agentId });
 			}
 
@@ -235,6 +238,14 @@ function processProgressRecord(
 				}
 				subNames.set(block.id, toolName);
 
+				// Track sub-tool start timestamps (for stale cleanup)
+				let subTimestamps = agent.activeSubagentToolTimestamps.get(parentToolId);
+				if (!subTimestamps) {
+					subTimestamps = new Map();
+					agent.activeSubagentToolTimestamps.set(parentToolId, subTimestamps);
+				}
+				subTimestamps.set(block.id, Date.now());
+
 				if (!PERMISSION_EXEMPT_TOOLS.has(toolName)) {
 					hasNonExemptSubTool = true;
 				}
@@ -264,6 +275,10 @@ function processProgressRecord(
 				const subNames = agent.activeSubagentToolNames.get(parentToolId);
 				if (subNames) {
 					subNames.delete(block.tool_use_id);
+				}
+				const subTimestamps = agent.activeSubagentToolTimestamps.get(parentToolId);
+				if (subTimestamps) {
+					subTimestamps.delete(block.tool_use_id);
 				}
 
 				const toolId = block.tool_use_id;
