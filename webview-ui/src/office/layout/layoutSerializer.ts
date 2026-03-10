@@ -34,9 +34,10 @@ export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): Furnit
   }
 
   const instances: FurnitureInstance[] = []
+  const skipped: string[] = []
   for (const item of furniture) {
     const entry = getCatalogEntry(item.type)
-    if (!entry) continue
+    if (!entry) { skipped.push(item.type); continue }
     const x = item.col * TILE_SIZE
     const y = item.row * TILE_SIZE
     const spriteH = entry.sprite.length
@@ -74,6 +75,10 @@ export function layoutToFurnitureInstances(furniture: PlacedFurniture[]): Furnit
 
     instances.push({ sprite, x, y, zY })
   }
+  if (skipped.length > 0) {
+    console.warn(`[layoutToFurnitureInstances] SKIPPED ${skipped.length} items (no catalog entry):`, skipped)
+  }
+  console.log(`[layoutToFurnitureInstances] ${instances.length} rendered, ${skipped.length} skipped of ${furniture.length} total`)
   return instances
 }
 

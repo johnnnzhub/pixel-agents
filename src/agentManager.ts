@@ -286,10 +286,9 @@ export function restoreAgents(
 	// Re-persist cleaned-up list (removes entries whose terminals are gone)
 	ctx.persistAgents();
 
-	// Start project scan for /clear detection
-	if (restoredProjectDir) {
-		ensureProjectScan(restoredProjectDir, ctx);
-	}
+	// NOTE: Do NOT call ensureProjectScan() here — it seeds ALL existing JSONL files
+	// into knownJsonlFiles, which prevents adoptExistingSessions() from detecting them.
+	// ensureProjectScan() is called explicitly in PixelAgentsViewProvider AFTER adoption.
 }
 
 export function sendExistingAgents(

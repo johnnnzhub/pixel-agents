@@ -107,19 +107,27 @@ export function adoptExistingSessions(
 			.map(f => path.join(projectDir, f));
 	} catch { log.debug('Project dir not readable:', projectDir); return; }
 
+	log.info(`[adoptExistingSessions] projectDir=${projectDir}, totalJsonl=${files.length}, knownJsonl=${ctx.knownJsonlFiles.size}`);
+
 	const now = Date.now();
 	const recentFiles = files.filter(f => {
-		if (ctx.knownJsonlFiles.has(f)) {return false;}
+		const isKnown = ctx.knownJsonlFiles.has(f);
+		if (isKnown) { log.debug(`  SKIP (known): ${path.basename(f)}`); return false; }
 		try {
 			const stat = fs.statSync(f);
-			return (now - stat.mtimeMs) < ADOPT_RECENT_THRESHOLD_MS;
+			const ageMs = now - stat.mtimeMs;
+			const isRecent = ageMs < ADOPT_RECENT_THRESHOLD_MS;
+			if (!isRecent) { log.debug(`  SKIP (old ${Math.round(ageMs/1000)}s): ${path.basename(f)}`); }
+			return isRecent;
 		} catch { return false; }
 	});
 
+	log.info(`[adoptExistingSessions] recentFiles=${recentFiles.length}`);
 	if (recentFiles.length === 0) {return;}
 
 	// Collect unowned terminals
 	const unownedTerminals = vscode.window.terminals.filter(t => !isTerminalOwned(t, ctx.agents));
+	log.info(`[adoptExistingSessions] unownedTerminals=${unownedTerminals.length}, names=[${unownedTerminals.map(t => t.name).join(', ')}]`);
 
 	// Match by session ID: JSONL filename = <uuid>.jsonl, terminal may contain session UUID
 	for (const file of recentFiles) {
