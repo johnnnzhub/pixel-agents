@@ -28,6 +28,7 @@ import {
   MOUSE_LOOK_UPDATE_SEC,
   IDLE_LOOK_AROUND_MIN_SEC,
   IDLE_LOOK_AROUND_MAX_SEC,
+  TYPE_IDLE_FALLBACK_SEC,
 } from '../../constants.js'
 
 /** Default balanced personality */
@@ -113,6 +114,7 @@ export function createCharacter(
     clickReactionTimer: 0,
     lookTimer: MOUSE_LOOK_UPDATE_SEC,
     idleLookTimer: randomRange(IDLE_LOOK_AROUND_MIN_SEC, IDLE_LOOK_AROUND_MAX_SEC),
+    typeTimer: 0,
     personality,
   }
 }
@@ -188,6 +190,12 @@ export function updateCharacter(
         ch.frameTimer -= TYPE_FRAME_DURATION_SEC
         ch.frame = (ch.frame + 1) % 2
       }
+      // Fallback: if stuck in TYPE too long without new tool events, force idle
+      ch.typeTimer += dt
+      if (ch.isActive && ch.typeTimer >= TYPE_IDLE_FALLBACK_SEC) {
+        ch.isActive = false
+        ch.typeTimer = 0
+      }
       // If no longer active, transition to IDLE (immediate after short seatTimer)
       if (!ch.isActive) {
         if (ch.seatTimer > 0) {
@@ -235,7 +243,7 @@ export function updateCharacter(
           if (ch.thoughtTimer <= 0) {
             if (Math.random() < THOUGHT_BUBBLE_CHANCE) {
               ch.bubbleType = 'thought'
-              ch.thoughtIcon = Math.floor(Math.random() * 5)
+              ch.thoughtIcon = Math.floor(Math.random() * 7)
               ch.bubbleTimer = randomRange(THOUGHT_BUBBLE_DURATION_MIN, THOUGHT_BUBBLE_DURATION_MAX)
             } else {
               ch.thoughtTimer = randomRange(THOUGHT_BUBBLE_MIN_SEC, THOUGHT_BUBBLE_MAX_SEC) / ch.personality.thoughtFrequency

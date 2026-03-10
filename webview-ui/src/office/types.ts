@@ -228,6 +228,8 @@ export interface Character {
   lookTimer: number
   /** Timer for idle look-around behavior */
   idleLookTimer: number
+  /** Seconds spent in TYPE state without new tool activity (fallback to IDLE) */
+  typeTimer: number
   /** Personality traits */
   personality: AgentPersonality
 }

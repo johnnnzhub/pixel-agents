@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import { vscode } from '../vscodeApi.js'
 import { isSoundEnabled, setSoundEnabled } from '../notificationSound.js'
+import {
+  isAmbientEnabled, setAmbientEnabled,
+  isTypingEnabled, setTypingEnabled,
+  isMusicEnabled, setMusicEnabled,
+} from '../audioManager.js'
 
 interface SettingsModalProps {
   isOpen: boolean
@@ -27,6 +32,9 @@ const menuItemBase: React.CSSProperties = {
 export function SettingsModal({ isOpen, onClose, isDebugMode, onToggleDebugMode }: SettingsModalProps) {
   const [hovered, setHovered] = useState<string | null>(null)
   const [soundLocal, setSoundLocal] = useState(isSoundEnabled)
+  const [ambientLocal, setAmbientLocal] = useState(isAmbientEnabled)
+  const [typingLocal, setTypingLocal] = useState(isTypingEnabled)
+  const [musicLocal, setMusicLocal] = useState(isMusicEnabled)
 
   if (!isOpen) return null
 
@@ -59,6 +67,8 @@ export function SettingsModal({ isOpen, onClose, isDebugMode, onToggleDebugMode 
           padding: '4px',
           boxShadow: 'var(--pixel-shadow)',
           minWidth: 200,
+          maxHeight: '80vh',
+          overflowY: 'auto',
         }}
       >
         {/* Header with title and X button */}
@@ -166,6 +176,105 @@ export function SettingsModal({ isOpen, onClose, isDebugMode, onToggleDebugMode 
             }}
           >
             {soundLocal ? 'X' : ''}
+          </span>
+        </button>
+        <button
+          onClick={() => {
+            const newVal = !isAmbientEnabled()
+            setAmbientEnabled(newVal)
+            setAmbientLocal(newVal)
+          }}
+          onMouseEnter={() => setHovered('ambient')}
+          onMouseLeave={() => setHovered(null)}
+          style={{
+            ...menuItemBase,
+            background: hovered === 'ambient' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+          }}
+        >
+          <span>Ambient Sounds</span>
+          <span
+            style={{
+              width: 14,
+              height: 14,
+              border: '2px solid rgba(255, 255, 255, 0.5)',
+              borderRadius: 0,
+              background: ambientLocal ? 'rgba(90, 140, 255, 0.8)' : 'transparent',
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '12px',
+              lineHeight: 1,
+              color: '#fff',
+            }}
+          >
+            {ambientLocal ? 'X' : ''}
+          </span>
+        </button>
+        <button
+          onClick={() => {
+            const newVal = !isTypingEnabled()
+            setTypingEnabled(newVal)
+            setTypingLocal(newVal)
+          }}
+          onMouseEnter={() => setHovered('typing')}
+          onMouseLeave={() => setHovered(null)}
+          style={{
+            ...menuItemBase,
+            background: hovered === 'typing' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+          }}
+        >
+          <span>Typing Sounds</span>
+          <span
+            style={{
+              width: 14,
+              height: 14,
+              border: '2px solid rgba(255, 255, 255, 0.5)',
+              borderRadius: 0,
+              background: typingLocal ? 'rgba(90, 140, 255, 0.8)' : 'transparent',
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '12px',
+              lineHeight: 1,
+              color: '#fff',
+            }}
+          >
+            {typingLocal ? 'X' : ''}
+          </span>
+        </button>
+        <button
+          onClick={() => {
+            const newVal = !isMusicEnabled()
+            setMusicEnabled(newVal)
+            setMusicLocal(newVal)
+          }}
+          onMouseEnter={() => setHovered('music')}
+          onMouseLeave={() => setHovered(null)}
+          style={{
+            ...menuItemBase,
+            background: hovered === 'music' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+          }}
+        >
+          <span>Lo-fi Music</span>
+          <span
+            style={{
+              width: 14,
+              height: 14,
+              border: '2px solid rgba(255, 255, 255, 0.5)',
+              borderRadius: 0,
+              background: musicLocal ? 'rgba(90, 140, 255, 0.8)' : 'transparent',
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '12px',
+              lineHeight: 1,
+              color: '#fff',
+            }}
+          >
+            {musicLocal ? 'X' : ''}
           </span>
         </button>
         <button

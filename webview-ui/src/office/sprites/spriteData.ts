@@ -448,6 +448,47 @@ export const THOUGHT_IDEA_SPRITE: SpriteData = (() => {
   ]
 })()
 
+/** Phone/scroll thought */
+export const THOUGHT_PHONE_SPRITE: SpriteData = (() => {
+  const P = '#5588DD' // phone blue
+  const S = '#AACCFF' // screen light
+  return [
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, P, P, P, TF, TF, TF, TB],
+    [TB, TF, TF, TF, P, S, P, TF, TF, TF, TB],
+    [TB, TF, TF, TF, P, S, P, TF, TF, TF, TB],
+    [TB, TF, TF, TF, P, S, P, TF, TF, TF, TB],
+    [TB, TF, TF, TF, P, P, P, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [_, _, _, _, _, _, _, TB, TB, _, _],
+    [_, _, _, _, _, _, _, _, TB, _, _],
+    [_, _, _, _, _, _, _, _, _, _, _],
+  ]
+})()
+
+/** Stretch/exercise thought */
+export const THOUGHT_STRETCH_SPRITE: SpriteData = (() => {
+  const A = '#66BB88' // active green
+  return [
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, A, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, A, A, A, TF, TF, TF, TB],
+    [TB, TF, TF, A, TF, A, TF, A, TF, TF, TB],
+    [TB, TF, TF, TF, TF, A, TF, TF, TF, TF, TB],
+    [TB, TF, TF, TF, A, TF, A, TF, TF, TF, TB],
+    [TB, TF, TF, TF, A, TF, A, TF, TF, TF, TB],
+    [TB, TF, TF, TF, TF, TF, TF, TF, TF, TF, TB],
+    [_, TB, TB, TB, TB, TB, TB, TB, TB, TB, _],
+    [_, _, _, _, _, _, _, TB, TB, _, _],
+    [_, _, _, _, _, _, _, _, TB, _, _],
+    [_, _, _, _, _, _, _, _, _, _, _],
+  ]
+})()
+
 /** Array of all thought sprites for random selection */
 export const THOUGHT_SPRITES: SpriteData[] = [
   THOUGHT_COFFEE_SPRITE,
@@ -455,6 +496,8 @@ export const THOUGHT_SPRITES: SpriteData[] = [
   THOUGHT_CODE_SPRITE,
   THOUGHT_MUSIC_SPRITE,
   THOUGHT_IDEA_SPRITE,
+  THOUGHT_PHONE_SPRITE,
+  THOUGHT_STRETCH_SPRITE,
 ]
 
 // ── Character Sprites ───────────────────────────────────────────

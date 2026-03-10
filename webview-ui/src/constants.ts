@@ -119,6 +119,9 @@ export const CLICK_REACTION_DURATION_SEC = 0.4
 export const IDLE_LOOK_AROUND_MIN_SEC = 8.0
 export const IDLE_LOOK_AROUND_MAX_SEC = 15.0
 
+// ── Fallback Idle ───────────────────────────────────────────
+export const TYPE_IDLE_FALLBACK_SEC = 60.0
+
 // ── Game Logic ───────────────────────────────────────────────
 export const MAX_DELTA_TIME_SEC = 0.1
 export const WAITING_BUBBLE_DURATION_SEC = 2.0
