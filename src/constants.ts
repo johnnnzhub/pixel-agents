@@ -11,11 +11,11 @@ export const PROJECT_SCAN_INTERVAL_MS = getPollInterval();
 export const TOOL_DONE_DELAY_MS = 300;
 export const PERMISSION_TIMER_DELAY_MS = 7000;
 export const TEXT_IDLE_DELAY_MS = 5000;
-export const ADOPT_RECENT_THRESHOLD_MS = 43_200_000;       // 12h adoption window (Antigravity native sessions)
+export const ADOPT_RECENT_THRESHOLD_MS = 300_000;          // 5min adoption window
 
 // ── Attached (headless) Agent Stale Detection ────────────────
 export const ATTACHED_STALE_CHECK_INTERVAL_MS = 30_000;   // Check stale every 30s
-export const ATTACHED_STALE_THRESHOLD_MS = 43_200_000;     // Remove after 12h idle (Antigravity sessions stay alive)
+export const ATTACHED_STALE_THRESHOLD_MS = 300_000;        // Remove after 5min idle
 
 // ── Sub-agent Tool Stale Detection ─────────────────────────
 export const SUBAGENT_TOOL_STALE_MS = 300_000;              // Clean up after 5min idle
