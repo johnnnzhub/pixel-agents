@@ -16,7 +16,7 @@ import {
 } from './constants.js';
 import { log } from './logger.js';
 
-export const PERMISSION_EXEMPT_TOOLS = new Set(['Task', 'AskUserQuestion']);
+export const PERMISSION_EXEMPT_TOOLS = new Set(['Task', 'Agent', 'AskUserQuestion']);
 
 export function formatToolStatus(toolName: string, input: Record<string, unknown>): string {
 	const base = (p: unknown) => typeof p === 'string' ? path.basename(p) : '';
@@ -32,7 +32,8 @@ export function formatToolStatus(toolName: string, input: Record<string, unknown
 		case 'Grep': return 'Searching code';
 		case 'WebFetch': return 'Fetching web content';
 		case 'WebSearch': return 'Searching the web';
-		case 'Task': {
+		case 'Task':
+		case 'Agent': {
 			const desc = typeof input.description === 'string' ? input.description : '';
 			return desc ? `Subtask: ${desc.length > TASK_DESCRIPTION_DISPLAY_MAX_LENGTH ? desc.slice(0, TASK_DESCRIPTION_DISPLAY_MAX_LENGTH) + '\u2026' : desc}` : 'Running subtask';
 		}
@@ -109,8 +110,9 @@ export function processTranscriptLine(
 						if (block.type === 'tool_result' && block.tool_use_id) {
 							log.info(`Agent ${agentId} tool done: ${block.tool_use_id}`);
 							const completedToolId = block.tool_use_id;
-							// If the completed tool was a Task, clear its subagent tools
-							if (agent.activeToolNames.get(completedToolId) === 'Task') {
+							// If the completed tool was a Task/Agent, clear its subagent tools
+							const completedToolName = agent.activeToolNames.get(completedToolId);
+							if (completedToolName === 'Task' || completedToolName === 'Agent') {
 								agent.activeSubagentToolIds.delete(completedToolId);
 								agent.activeSubagentToolNames.delete(completedToolId);
 								agent.activeSubagentToolTimestamps.delete(completedToolId);
@@ -203,8 +205,9 @@ function processProgressRecord(
 		return;
 	}
 
-	// Verify parent is an active Task tool (agent_progress handling)
-	if (agent.activeToolNames.get(parentToolId) !== 'Task') {return;}
+	// Verify parent is an active Task/Agent tool (agent_progress handling)
+	const parentToolName = agent.activeToolNames.get(parentToolId);
+	if (parentToolName !== 'Task' && parentToolName !== 'Agent') {return;}
 
 	const msg = data.message as Record<string, unknown> | undefined;
 	if (!msg) {return;}
